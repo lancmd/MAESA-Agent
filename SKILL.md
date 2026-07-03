@@ -101,6 +101,15 @@ description: 全国矿区土地利用分类、沉陷积水识别、PLUS模型预
 
 根据用户需求，提供 ENVI 监督分类、ArcGIS 随机森林、GEE 随机森林或深度学习分类流程。分类完成后统一输出 GeoTIFF。
 
+开展 ENVI 分类时，按需读取：
+
+- `envi_classification/supervised_classification.md`：分类器选择、参数与后处理；
+- `envi_classification/roi_sample_rules.md`：训练样本和验证样本规则；
+- `envi_classification/accuracy_assessment.md`：独立精度评价；
+- `envi_classification/export_to_arcgis.md`：分类结果导出和网格检查。
+
+至少比较一个机器学习分类器与一个传统分类器；用户提出“最大最小分类”时，分别运行最大似然法和最小距离法，并使用同一独立验证集比较，不把二者混写为单一算法。
+
 ### Step 4：面积统计与土地利用转移
 
 统计各年份土地利用面积，统一换算为 hm²。利用 ArcGIS Pro 的 Combine 或 Tabulate Area 工具计算土地利用转移矩阵，并整理 Sankey 图数据。

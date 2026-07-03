@@ -23,6 +23,7 @@
 
 - `SKILL.md`：Skill 核心说明；
 - `gee_codes/`：GEE 数据下载与预处理代码；
+- `envi_classification/`：ENVI 监督分类、ROI、精度评价与 ArcGIS 导出流程；
 - `arcgis_steps/`：ArcGIS Pro 操作流程；
 - `plus_model/`：PLUS 模型驱动因子与情景设置；
 - `invest_carbon/`：InVEST 碳储量计算；
