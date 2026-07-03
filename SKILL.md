@@ -1,5 +1,5 @@
 ---
-name: national_mining_lulc_carbon_skill
+name: national-mining-lulc-carbon-skill
 description: 全国矿区土地利用分类、沉陷积水识别、PLUS模型预测、InVEST碳储量估算和生态服务价值评价全流程 Skill，适用于煤矿、金属矿、非金属矿、废弃矿山和生态修复矿区。
 ---
 
@@ -85,6 +85,17 @@ description: 全国矿区土地利用分类、沉陷积水识别、PLUS模型预
 ### Step 2：影像下载与预处理
 
 根据年份自动选择 Landsat 或 Sentinel-2 数据，完成去云、合成、裁剪和指数计算，输出分类输入影像。常用指数包括 NDVI、NDWI、MNDWI、NDBI。
+
+按任务读取并修改对应的 GEE 模板：
+
+- Landsat 分类输入：`gee_codes/landsat_lulc_input.js`；
+- Sentinel-2 分类输入：`gee_codes/sentinel2_lulc_input.js`；
+- 月尺度水体指数：`gee_codes/ndwi_monthly_download.js`；
+- DEM 与坡度：`gee_codes/dem_slope_download.js`；
+- WorldClim 静态气候背景：`gee_codes/climate_download.js`；
+- WorldPop 人口数量与密度：`gee_codes/population_download.js`。
+
+运行前必须替换 `roiAsset`，并按研究区设置年份、月份、云量阈值和投影坐标系。运行后先检查控制台影像数量与输出波段，再在 Tasks 面板启动导出任务。
 
 ### Step 3：土地利用分类
 
