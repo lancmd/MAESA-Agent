@@ -82,6 +82,8 @@ description: 全国矿区土地利用分类、沉陷积水识别、PLUS模型预
 
 根据用户提供的矿区边界和研究年份，判断适合的遥感数据源和空间分辨率。
 
+当 GEE 目录不能满足数据获取、需要固定具体产品版本或开展多矿区批处理时，读取 `open_gis_workflows/data_discovery.md`，使用官方目录/STAC 搜索并保存产品 ID、访问日期和许可。
+
 ### Step 2：影像下载与预处理
 
 根据年份自动选择 Landsat 或 Sentinel-2 数据，完成去云、合成、裁剪和指数计算，输出分类输入影像。常用指数包括 NDVI、NDWI、MNDWI、NDBI。
@@ -96,6 +98,8 @@ description: 全国矿区土地利用分类、沉陷积水识别、PLUS模型预
 - WorldPop 人口数量与密度：`gee_codes/population_download.js`。
 
 运行前必须替换 `roiAsset`，并按研究区设置年份、月份、云量阈值和投影坐标系。运行后先检查控制台影像数量与输出波段，再在 Tasks 面板启动导出任务。
+
+需要在服务器或本地批量处理多年份、多矿区数据时，读取 `open_gis_workflows/gdal_batch_processing.md`；不得用 GDAL 命令行替换已经稳定且规模较小的桌面流程。
 
 ### Step 3：土地利用分类
 
@@ -155,3 +159,4 @@ description: 全国矿区土地利用分类、沉陷积水识别、PLUS模型预
 - 土地利用转移矩阵不能只根据总面积反推，应由两期分类图叠加得到；
 - 沉陷积水与自然水体不能仅靠 NDWI 区分，应结合矿区边界、沉陷区范围、历史影像和人工判读；
 - 碳储量计算中，沉陷积水不宜简单套用普通水体碳密度，应考虑水体碳、水生植物碳和底泥碳。
+- 交付任何模型输入或空间分析成果前，读取 `open_gis_workflows/validation_and_manifest.md`，完成技术验证并填写 `templates/data_manifest.json`；没有独立分类验证样本时，将分类精度状态标记为 pending，不中断其他技术处理。

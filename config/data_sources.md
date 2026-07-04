@@ -134,3 +134,13 @@ PLUS 模型一般需要将道路、铁路、河流等矢量数据转换为欧氏
 - ArcGIS Pro：投影栅格、重采样、按掩膜提取；
 - ENVI：Resize Data、Layer Stacking；
 - GEE：reproject、resample、clip。
+
+## 8. 开放目录发现与版本固定
+
+- 批量检索卫星影像和 DEM 时，优先使用官方数据目录或 STAC API；
+- STAC 检索应保存最终 Item ID、资产波段、处理级别和访问日期；
+- OSM 道路、水系等数据应记录提取日期，不能只写“来源 OSM”；
+- 政府门户数据应记录发布单位、版本/年份、下载日期和许可；
+- 多年平均气候、逐年气候、人口总数和人口密度必须明确区分；
+- 数据发现和固定流程见 `open_gis_workflows/data_discovery.md`；
+- 所有最终来源写入 `templates/data_manifest.json`。

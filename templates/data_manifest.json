@@ -1,0 +1,61 @@
+{
+  "project": "national-mining-lulc-carbon",
+  "run_id": "YYYYMMDD-area-method-v1",
+  "generated_at": "YYYY-MM-DDTHH:MM:SS+08:00",
+  "aoi": {
+    "id": "mining_area_id",
+    "name": "mining_area_name",
+    "boundary_file": "path/to/aoi.gpkg"
+  },
+  "software": {
+    "arcgis_pro": "version-or-not-used",
+    "envi": "version-or-not-used",
+    "gdal": "version-or-not-used",
+    "plus": "version-or-not-used",
+    "invest": "version-or-not-used"
+  },
+  "master_grid": {
+    "file": "path/to/master_lulc.tif",
+    "crs": "EPSG-or-WKT",
+    "cell_size_x": 30,
+    "cell_size_y": 30,
+    "extent": [0, 0, 0, 0],
+    "rows": 0,
+    "columns": 0,
+    "nodata": -9999
+  },
+  "sources": [
+    {
+      "id": "source-id-or-stac-item-id",
+      "name": "dataset-name",
+      "provider": "provider-name",
+      "version_or_date": "version-or-date",
+      "url": "source-url",
+      "license": "license-and-attribution",
+      "original_crs": "EPSG-or-WKT",
+      "original_resolution": "resolution-and-unit",
+      "unit": "data-unit",
+      "sha256": "source-file-sha256"
+    }
+  ],
+  "processing": [
+    {
+      "output": "path/to/output.tif",
+      "tool": "tool-name-and-version",
+      "parameters": "key-parameters",
+      "resampling": "near-bilinear-average-sum-or-none",
+      "nodata": -9999
+    }
+  ],
+  "outputs": [
+    {
+      "path": "path/to/output.tif",
+      "format": "GeoTIFF",
+      "dtype": "Int16-or-Float32",
+      "bands": ["band-name"],
+      "sha256": "output-file-sha256",
+      "technical_validation": "passed-pending-failed",
+      "classification_accuracy": "passed-pending-not-applicable"
+    }
+  ]
+}

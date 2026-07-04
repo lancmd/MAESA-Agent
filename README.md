@@ -25,6 +25,7 @@
 - `gee_codes/`：GEE 数据下载与预处理代码；
 - `envi_classification/`：ENVI 监督分类、ROI、精度评价与 ArcGIS 导出流程；
 - `arcgis_steps/`：ArcGIS Pro 操作流程；
+- `open_gis_workflows/`：开放数据发现、GDAL 批处理与质量验证；
 - `plus_model/`：PLUS 模型驱动因子与情景设置；
 - `invest_carbon/`：InVEST 碳储量计算；
 - `ecosystem_service/`：生态服务价值评价；
