@@ -114,9 +114,13 @@ description: 全国矿区土地利用分类、沉陷积水识别、PLUS模型预
 
 统计各年份土地利用面积，统一换算为 hm²。利用 ArcGIS Pro 的 Combine 或 Tabulate Area 工具计算土地利用转移矩阵，并整理 Sankey 图数据。
 
+先读取 `arcgis_steps/projection_resample.md` 统一分析坐标系和主网格，再按 `arcgis_steps/area_statistics.md` 统计面积。不得在 EPSG:4326 或 Web Mercator 中直接进行平面面积统计，也不得用各期总面积反推转移矩阵。
+
 ### Step 5：PLUS 模型预测
 
 准备 DEM、坡度、气温、降水、土壤、人口、GDP、道路距离、铁路距离、河流距离、矿区距离等驱动因子。设置自然发展、生态保护和矿区开发等情景，预测未来土地利用格局。
+
+读取 `arcgis_steps/plus_driver_preprocessing.md`，以基期土地利用图为 master grid，统一所有驱动因子的 CRS、像元、范围、行列数、Snap 和 NoData；只有 DEM 时，用 Surface Parameters 派生坡度和坡向，用 Distance Accumulation 生成道路、铁路、河流、城镇和矿区距离栅格。
 
 ### Step 6：碳储量计算
 
