@@ -133,9 +133,9 @@ description: 全国矿区土地利用分类、沉陷积水识别、PLUS模型预
 - `plus_model/calibration_validation.md`：历史回代、FoM/Kappa 和多随机种子；
 - `plus_model/scenario_setting.md`：ND、UD、EP、RE 四情景；
 - `plus_model/conversion_rules.md`：转换矩阵语义和可达性；
-- `plus_model/pim_subsidence_driver.md`：资源开采情景的 PIM 耦合。
+- `plus_model/pim_subsidence_driver.md`：外部 PIM 软件结果与资源开采情景的接口。
 
-未来预测前必须完成已知年份回代。Kappa 不能单独作为通过依据，应同时报告 FoM、关键地类精度和多随机种子稳定性。论文或附件中的百分比只能作为案例参数或敏感性分析起点，不得作为全国矿区固定默认值。PIM 下沉深度不等于沉陷积水；没有地下水、地形闭合和排水等证据时，只能解释为沉陷影响潜势。
+未来预测前必须完成已知年份回代。Kappa 不能单独作为通过依据，应同时报告 FoM、关键地类精度和多随机种子稳定性。论文或附件中的百分比只能作为案例参数或敏感性分析起点，不得作为全国矿区固定默认值。资源开采情景只接收独立沉陷预计软件导出的 `w.dat`、`w.txt` 或栅格；本 Skill 不计算 PIM、不插值预计沉陷、不生成沉陷等值线。PIM 下沉深度也不等于沉陷积水。
 
 ### Step 6：碳储量计算
 
