@@ -57,6 +57,8 @@
 | `arcgis.run_operations` | ArcGIS | `spec`, `workspace` |
 | `plus.run_scenario` | PLUS | `project`, `scenario`, `workspace` |
 | `invest.run_carbon` | InVEST | `datastack`, `workspace` |
+| `pytorch.validate_model` | PyTorch | `model_package` |
+| `pytorch.run_lulc_inference` | PyTorch | `model_package`, `input_raster`, `class_output`, `confidence_output` |
 
 后端可扩展操作，但必须在 `system.capabilities` 中返回名称、参数模式、软件版本和限制。
 

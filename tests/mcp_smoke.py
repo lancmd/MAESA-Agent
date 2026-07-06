@@ -27,20 +27,40 @@ async def run() -> None:
             expected = {
                 "list_backends", "backend_capabilities", "inspect_dataset", "run_gee_export",
                 "run_envi_classification", "run_arcgis_operations", "run_plus_scenario",
-                "run_invest_carbon", "get_job_status", "cancel_job", "list_job_outputs",
+                "run_invest_carbon", "validate_lulc_model", "run_pytorch_lulc",
+                "get_job_status", "cancel_job", "list_job_outputs",
             }
             missing = expected - names
             if missing:
                 raise AssertionError(f"missing MCP tools: {sorted(missing)}")
             result = await session.call_tool("list_backends", {})
             payload = json.loads(result.content[0].text)
-            if not {"gee", "envi", "plus", "arcgis", "invest"}.issubset(payload["backends"]):
+            if not {"gee", "envi", "plus", "arcgis", "invest", "pytorch"}.issubset(payload["backends"]):
                 raise AssertionError("backend registry is incomplete")
             capability_result = await session.call_tool("backend_capabilities", {"backend": "arcgis"})
             capability = json.loads(capability_result.content[0].text)
             if capability.get("status") != "completed":
                 raise AssertionError(f"local command bridge failed: {capability}")
             end_to_end = {}
+            model_package = ROOT / "tests" / "fixtures" / "model_package"
+            model_result = await session.call_tool("validate_lulc_model", {"model_package": str(model_package)})
+            model_validation = json.loads(model_result.content[0].text)
+            if model_validation.get("status") != "completed":
+                raise AssertionError(f"PyTorch model contract validation failed: {model_validation}")
+            end_to_end["pytorch_model"] = model_validation["result"]["model_id"]
+            runtime_package = ROOT / "outputs" / "pytorch_smoke" / "model_package"
+            runtime_input = ROOT / "outputs" / "pytorch_smoke" / "input.tif"
+            if runtime_package.exists() and runtime_input.exists():
+                torch_result = await session.call_tool("run_pytorch_lulc", {
+                    "model_package": str(runtime_package), "input_raster": str(runtime_input),
+                    "class_output": str(ROOT / "outputs" / "pytorch_smoke" / "mcp_lulc.tif"),
+                    "confidence_output": str(ROOT / "outputs" / "pytorch_smoke" / "mcp_confidence.tif"),
+                    "device": "cpu",
+                })
+                torch_inference = json.loads(torch_result.content[0].text)
+                if torch_inference.get("status") != "completed":
+                    raise AssertionError(f"PyTorch MCP inference failed: {torch_inference}")
+                end_to_end["pytorch_inference"] = torch_inference["result"]["status"]
             raster = ROOT / "outputs" / "arcgis_smoke" / "lulc.tif"
             if raster.exists():
                 inspected_result = await session.call_tool("inspect_dataset", {"path": str(raster)})

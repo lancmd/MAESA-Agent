@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "model_id": "mining-lulc-7class-v1",
+  "format": "exported_program",
+  "weights": "model.pt2",
+  "sha256": "replace_with_lowercase_sha256",
+  "sensor": "Sentinel-2_L2A",
+  "spatial_resolution_m": 10,
+  "classes": [
+    {"id": 1, "name": "subsidence_water"},
+    {"id": 2, "name": "natural_water"},
+    {"id": 3, "name": "built_up"},
+    {"id": 4, "name": "cropland"},
+    {"id": 5, "name": "forest"},
+    {"id": 6, "name": "grassland"},
+    {"id": 7, "name": "bare_mining_land"}
+  ],
+  "input": {
+    "bands": ["blue", "green", "red", "nir", "swir1", "swir2"],
+    "band_indexes": [1, 2, 3, 4, 5, 6],
+    "mean": [0.1, 0.1, 0.1, 0.2, 0.15, 0.1],
+    "std": [0.05, 0.05, 0.05, 0.08, 0.07, 0.06],
+    "scale": 0.0001,
+    "offset": 0.0,
+    "patch_size": 512,
+    "stride": 384
+  },
+  "output": {
+    "type": "logits",
+    "tensor_index": 0,
+    "tensor_key": null,
+    "class_nodata": 0,
+    "confidence_nodata": -9999.0
+  },
+  "training": {
+    "regions": ["replace_with_training_regions"],
+    "imagery_years": [2020],
+    "validation_summary": "replace_with_validation_summary"
+  }
+}

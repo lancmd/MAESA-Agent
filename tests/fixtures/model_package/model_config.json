@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "model_id": "contract-smoke-model",
+  "format": "exported_program",
+  "weights": "model.pt2",
+  "sha256": "7493b9b1bbd658935e59315eb6ce55132bc249f2566c8c8e16f92ab0c40353c8",
+  "sensor": "Sentinel-2_L2A",
+  "spatial_resolution_m": 10,
+  "classes": [
+    {"id": 1, "name": "water"},
+    {"id": 2, "name": "built_up"}
+  ],
+  "input": {
+    "bands": ["red", "nir"],
+    "band_indexes": [1, 2],
+    "mean": [0.1, 0.2],
+    "std": [0.05, 0.08],
+    "scale": 0.0001,
+    "offset": 0.0,
+    "patch_size": 32,
+    "stride": 24
+  },
+  "output": {
+    "type": "logits",
+    "tensor_index": 0,
+    "tensor_key": null,
+    "class_nodata": 0,
+    "confidence_nodata": -9999.0
+  },
+  "training": {
+    "regions": ["smoke"],
+    "imagery_years": [2020],
+    "validation_summary": "contract test only"
+  }
+}

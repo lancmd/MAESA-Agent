@@ -186,6 +186,22 @@ def run_invest_carbon(datastack: str, workspace: str, backend: str = "invest") -
 
 
 @mcp.tool()
+def validate_lulc_model(model_package: str, backend: str = "pytorch") -> str:
+    """Validate a portable PyTorch LULC model package, class map, preprocessing contract, and weights hash."""
+    return json_result(registry.call(backend, "pytorch.validate_model", {"model_package": model_package}))
+
+
+@mcp.tool()
+def run_pytorch_lulc(model_package: str, input_raster: str, class_output: str,
+                     confidence_output: str, device: str = "auto", backend: str = "pytorch") -> str:
+    """Run tiled PyTorch LULC inference and create classification and confidence GeoTIFF outputs."""
+    return json_result(registry.call(backend, "pytorch.run_lulc_inference", {
+        "model_package": model_package, "input_raster": input_raster,
+        "class_output": class_output, "confidence_output": confidence_output, "device": device
+    }))
+
+
+@mcp.tool()
 def get_job_status(backend: str, job_id: str) -> str:
     """Get status, progress, logs, errors, and outputs for an asynchronous software job."""
     return json_result(registry.call(backend, "system.job_status", {"job_id": job_id}))

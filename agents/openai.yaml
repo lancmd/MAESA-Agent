@@ -1,6 +1,6 @@
 interface:
   display_name: "矿区生态流程执行智能体"
-  short_description: "跨 GEE、ArcGIS、ENVI、PLUS 和 InVEST 执行矿区空间分析"
+  short_description: "跨 GEE、PyTorch、GIS、PLUS 和 InVEST 执行矿区空间分析"
   default_prompt: "Use $national-mining-lulc-carbon-skill to inspect my mining-area data, select available software adapters, execute the requested workflow, validate outputs, and return the generated artifacts."
 dependencies:
   tools:

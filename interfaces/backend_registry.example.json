@@ -27,6 +27,11 @@
       "transport": "command",
       "command": ["{python}", "{skill_root}/scripts/local_backend.py", "--backend", "invest"],
       "capabilities": ["invest.run_carbon"]
+    },
+    "pytorch": {
+      "transport": "command",
+      "command": ["{python}", "{skill_root}/scripts/pytorch_backend.py"],
+      "capabilities": ["pytorch.validate_model", "pytorch.run_lulc_inference"]
     }
   }
 }

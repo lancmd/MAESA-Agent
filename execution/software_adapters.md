@@ -16,6 +16,10 @@ InVEST 可由远程服务、容器或本地命令桥接器运行 datastack。本
 
 ENVI 桥接器在有许可的 ENVI 进程或服务器中实现 `envi.supervised_classification`。仓库的 IDL 模板可作为桥接器内部实现，但 MCP 客户端不需要知道 IDL 路径。最大似然与最小距离应使用同一套训练/验证样本再比较精度。许可初始化失败时阶段状态为 `failed` 或 `waiting_interactive`，不得伪造输出。
 
+## PyTorch
+
+PyTorch 后端实现 `pytorch.validate_model` 与 `pytorch.run_lulc_inference`。模型以带哈希、类别、波段、归一化和 patch 参数的目录上传，优先使用 `.pt2` ExportedProgram。推理采用重叠分块融合，输出分类与置信度 GeoTIFF；跨区域应用默认标记 `pending_validation`。详细规范见 `deep_learning/pytorch_workflow.md`。
+
 ## Google Earth Engine
 
 GEE 后端可使用 Earth Engine Python/REST API、服务账号、已认证用户会话或任务队列实现 `gee.export_imagery`。后端负责返回任务 ID并跟踪导出；本地渲染 `gee_codes/*.js` 只是无认证时的兜底。脚本生成不是影像导出完成。

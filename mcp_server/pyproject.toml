@@ -5,6 +5,9 @@ description = "Backend-neutral MCP tools for mining-area GIS workflows"
 requires-python = ">=3.11"
 dependencies = ["mcp[cli]>=1.2"]
 
+[project.optional-dependencies]
+pytorch = ["numpy>=1.26", "torch>=2.4", "rasterio>=1.3"]
+
 [project.scripts]
 mining-gis-mcp = "mining_mcp_server:main"
 
