@@ -1,5 +1,5 @@
 ---
-name: national-mining-lulc-carbon-skill
+name: Intelligent Agent for Mining Area Ecological Space Analysis
 description: 通过 MCP 与可注册软件桥接器直接执行矿区遥感下载、PyTorch/ENVI 土地利用分类、ArcGIS 栅格处理、PLUS 情景模拟、InVEST 碳储量计算和结果验证。用于用户提供研究区、模型、碳密度与目标后，由智能体调用本地、局域网或云端的 GEE、PyTorch、ArcGIS Pro、ENVI、PLUS、InVEST、QGIS 或开放 GIS 后端，跟踪任务并返回真实产物；不依赖固定软件安装路径，也不是只给操作教程。
 ---
 
