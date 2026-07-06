@@ -1,6 +1,6 @@
 # Intelligent Agent for Mining Area Ecological Space Analysis
 
-面向矿区土地利用、PyTorch/ENVI 分类、PLUS 情景模拟和 InVEST 碳储量分析的跨软件执行型 Skill。整体采用类似 Smart-QGIS 的“MCP 工具层 + 软件桥接层”：智能体调用稳定工具协议，GEE、PyTorch、ArcGIS Pro、ENVI、PLUS、InVEST、QGIS 或开放 GIS 可位于本机、服务器或云端，不依赖固定安装路径。
+面向矿区土地利用、PyTorch/ENVI 分类、PLUS 情景模拟和 InVEST 碳储量分析的跨软件执行型 Skill。整体采用“MCP 工具层 + 软件桥接层”：智能体调用稳定工具协议，GEE、PyTorch、ArcGIS Pro、ENVI、PLUS、InVEST、QGIS 或开放 GIS 可位于本机、服务器或云端，不依赖固定安装路径。
 
 ## 快速开始
 
