@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "project_id": "invest_smoke",
+  "workspace": "../outputs/invest_smoke",
+  "software": {},
+  "stages": [
+    {
+      "id": "invest_carbon",
+      "adapter": "invest",
+      "enabled": true,
+      "model": "carbon",
+      "datastack": "invest_carbon_smoke_datastack.json",
+      "model_workspace": "model",
+      "inputs": [
+        "invest_carbon_smoke_datastack.json",
+        "invest_carbon_pools_smoke.csv",
+        "../outputs/arcgis_smoke/lulc.tif"
+      ],
+      "outputs": ["model/tot_c_cur_smoke.tif"],
+      "depends_on": []
+    }
+  ]
+}

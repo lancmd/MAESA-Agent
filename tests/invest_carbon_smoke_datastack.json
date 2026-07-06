@@ -1,0 +1,13 @@
+{
+  "args": {
+    "calc_sequestration": false,
+    "carbon_pools_path": "invest_carbon_pools_smoke.csv",
+    "do_redd": false,
+    "do_valuation": false,
+    "lulc_cur_path": "../outputs/arcgis_smoke/lulc.tif",
+    "n_workers": -1,
+    "results_suffix": "smoke"
+  },
+  "invest_version": "3.12.1",
+  "model_name": "natcap.invest.carbon"
+}

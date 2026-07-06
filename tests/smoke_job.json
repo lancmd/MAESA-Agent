@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "project_id": "smoke_test",
+  "workspace": "../outputs/smoke_test",
+  "software": {},
+  "stages": [
+    {
+      "id": "render_gee_landsat",
+      "adapter": "gee",
+      "enabled": true,
+      "template": "../gee_codes/landsat_lulc_input.js",
+      "output": "generated/landsat_2020.js",
+      "variables": {
+        "roiAsset": "users/smoke/mining_area",
+        "year": 2020
+      },
+      "inputs": [],
+      "outputs": ["generated/landsat_2020.js"],
+      "depends_on": []
+    }
+  ]
+}

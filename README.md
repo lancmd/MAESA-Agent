@@ -1,32 +1,26 @@
-#mining-lulc-carbon-skill
+# national-mining-lulc-carbon-skill
 
-矿区土地利用分类、PLUS预测、InVEST碳储量与生态服务评价全流程 Skill。
+面向矿区土地利用、PLUS 情景模拟和 InVEST 碳储量分析的跨软件执行型 Skill。整体采用类似 Smart-QGIS 的“MCP 工具层 + 软件桥接层”：智能体调用稳定工具协议，GEE、ArcGIS Pro、ENVI、PLUS、InVEST、QGIS 或开放 GIS 可位于本机、服务器或云端，不依赖固定安装路径。
 
-## 适用对象
+## 快速开始
 
-本 Skill 适用于全国煤矿区、金属矿区、非金属矿区、废弃矿山修复区、采煤沉陷区和高潜水位矿区。
+```powershell
+Copy-Item interfaces/backend_registry.example.json interfaces/backend_registry.json
+python -m pip install -e mcp_server
+mining-gis-mcp --transport streamable-http --host 127.0.0.1 --port 8765
+```
 
-## 主要功能
+默认 MCP 地址为 `http://127.0.0.1:8765/mcp`。在 `interfaces/backend_registry.json` 中注册实际后端：HTTP 可接 GEE/PLUS 服务，socket 可接软件内部插件，command 可接当前 ArcPy/InVEST 本地适配器。没有 MCP 客户端时，仍可使用 `scripts/workflow_agent.py` 作为本地兜底。
 
-1. 遥感影像下载与预处理；
-2. 土地利用分类；
-3. 沉陷积水与自然水体识别；
-4. 土地利用面积统计；
-5. 土地利用转移矩阵计算；
-6. PLUS 模型未来情景预测；
-7. InVEST 碳储量计算；
-8. 沉陷积水复合碳库估算；
-9. Max-Min 与 AHP 生态服务价值评价；
-10. 论文图表和汇报材料生成。
+## 目录
 
-## 文件结构
+- `scripts/`：执行器和软件适配脚本。
+- `mcp_server/`：智能体可调用的统一 MCP 工具服务。
+- `interfaces/`：软件桥接协议与后端注册表。
+- `execution/`：执行契约与后端能力边界。
+- `templates/`：任务清单和 ArcGIS 操作清单模板。
+- `config/`：分类体系、数据源和矿区类型规则。
+- `gee_codes/`、`envi_classification/`、`arcgis_steps/`、`plus_model/`、`invest_carbon/`：领域流程与参数依据。
+- `open_gis_workflows/`：开放 GIS 数据与验证规范。
 
-- `SKILL.md`：Skill 核心说明；
-- `gee_codes/`：GEE 数据下载与预处理代码；
-- `envi_classification/`：ENVI 监督分类、ROI、精度评价与 ArcGIS 导出流程；
-- `arcgis_steps/`：ArcGIS Pro 操作流程；
-- `open_gis_workflows/`：开放数据发现、GDAL 批处理与质量验证；
-- `plus_model/`：PLUS 模型驱动因子与情景设置；
-- `invest_carbon/`：InVEST 碳储量计算；
-- `ecosystem_service/`：生态服务价值评价；
-- `templates/`：表格、转移矩阵和汇报模板。
+源数据默认只读，派生文件写入任务自己的 `workspace`。

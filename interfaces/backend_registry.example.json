@@ -1,0 +1,32 @@
+{
+  "protocol_version": "1.0",
+  "backends": {
+    "gee": {
+      "transport": "http",
+      "url": "http://127.0.0.1:9881/commands",
+      "token_env": "MINING_GEE_BRIDGE_TOKEN",
+      "capabilities": ["gee.export_imagery", "system.job_status", "system.list_outputs"]
+    },
+    "envi": {
+      "transport": "socket",
+      "host": "127.0.0.1",
+      "port": 9882,
+      "capabilities": ["envi.supervised_classification", "system.job_status", "system.list_outputs"]
+    },
+    "plus": {
+      "transport": "http",
+      "url": "http://127.0.0.1:9883/commands",
+      "capabilities": ["plus.run_scenario", "system.job_status", "system.list_outputs"]
+    },
+    "arcgis": {
+      "transport": "command",
+      "command": ["{python}", "{skill_root}/scripts/local_backend.py", "--backend", "arcgis"],
+      "capabilities": ["arcgis.run_operations", "dataset.inspect"]
+    },
+    "invest": {
+      "transport": "command",
+      "command": ["{python}", "{skill_root}/scripts/local_backend.py", "--backend", "invest"],
+      "capabilities": ["invest.run_carbon"]
+    }
+  }
+}

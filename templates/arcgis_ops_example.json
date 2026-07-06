@@ -1,0 +1,24 @@
+{
+  "environment": {
+    "overwriteOutput": true,
+    "snapRaster": "replace_with_master_lulc.tif",
+    "cellSize": "replace_with_master_lulc.tif",
+    "extent": "replace_with_master_lulc.tif"
+  },
+  "operations": [
+    {
+      "id": "describe_master",
+      "type": "describe",
+      "input": "replace_with_master_lulc.tif",
+      "output": "validation/master_description.json"
+    },
+    {
+      "id": "derive_terrain",
+      "type": "slope_aspect",
+      "input": "replace_with_dem.tif",
+      "slope_output": "intermediate/slope.tif",
+      "aspect_output": "intermediate/aspect.tif",
+      "z_unit": "METER"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "project_id": "arcgis_smoke",
+  "workspace": "../outputs/arcgis_smoke",
+  "software": {},
+  "stages": [
+    {
+      "id": "arcgis_operations",
+      "adapter": "arcgis",
+      "enabled": true,
+      "spec": "arcgis_smoke_ops.json",
+      "inputs": ["lulc.tif", "dem.tif"],
+      "outputs": [
+        "validation/lulc.json",
+        "validation/area.csv",
+        "slope.tif",
+        "aspect.tif"
+      ],
+      "depends_on": []
+    }
+  ]
+}

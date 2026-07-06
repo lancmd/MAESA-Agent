@@ -1,0 +1,30 @@
+{
+  "environment": {
+    "overwriteOutput": true,
+    "snapRaster": "lulc.tif",
+    "cellSize": "lulc.tif",
+    "extent": "lulc.tif"
+  },
+  "operations": [
+    {
+      "id": "describe_lulc",
+      "type": "describe",
+      "input": "lulc.tif",
+      "output": "validation/lulc.json"
+    },
+    {
+      "id": "terrain",
+      "type": "slope_aspect",
+      "input": "dem.tif",
+      "slope_output": "slope.tif",
+      "aspect_output": "aspect.tif",
+      "z_unit": "METER"
+    },
+    {
+      "id": "area",
+      "type": "class_area",
+      "input": "lulc.tif",
+      "output": "validation/area.csv"
+    }
+  ]
+}

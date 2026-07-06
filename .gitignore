@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+outputs/
+jobs/
+.venv/
+mcp_server/.venv/
+interfaces/backend_registry.json
