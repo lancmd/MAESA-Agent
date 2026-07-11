@@ -5,3 +5,4 @@ jobs/
 .venv/
 mcp_server/.venv/
 interfaces/backend_registry.json
+config/local_paths.json

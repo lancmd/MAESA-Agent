@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ async def run() -> None:
     parameters = StdioServerParameters(
         command=sys.executable,
         args=[str(ROOT / "mcp_server" / "mining_mcp_server.py"), "--transport", "stdio"],
+        env=dict(os.environ),
     )
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer) as session:
@@ -26,10 +28,13 @@ async def run() -> None:
             names = {tool.name for tool in tools.tools}
             expected = {
                 "list_backends", "backend_capabilities", "inspect_dataset", "validate_local_project",
+                "compile_project_workflow", "run_local_project", "validate_analysis_results",
+                "evaluate_lulc_accuracy", "validate_plus_backcast",
+                "validate_invest_consistency",
                 "run_envi_classification", "run_arcgis_operations", "run_plus_scenario",
                 "run_invest_carbon", "run_invest_ecosystem_model", "validate_lulc_model", "run_pytorch_lulc",
                 "evaluate_ecosystem_services", "analyze_ecosystem_tradeoffs", "compare_ecosystem_scenarios",
-                "calibrate_annual_water_yield", "analyze_ecosystem_drivers",
+                "calibrate_annual_water_yield", "analyze_ecosystem_drivers", "analyze_ecosystem_sensitivity",
                 "get_job_status", "cancel_job", "list_job_outputs",
             }
             missing = expected - names
@@ -50,6 +55,26 @@ async def run() -> None:
             project_validation = json.loads(project_result.content[0].text)
             if project_validation.get("status") != "completed":
                 raise AssertionError(f"local project validation failed: {project_validation}")
+            compilation_result = await session.call_tool("compile_project_workflow", {
+                "project_file": str(project_file), "output_job": str(ROOT / "outputs" / "mcp_project" / "workflow_job.json"),
+            })
+            compilation = json.loads(compilation_result.content[0].text)
+            if compilation.get("status") != "completed":
+                raise AssertionError(f"project workflow compilation failed: {compilation}")
+            evidence_result = await session.call_tool("validate_analysis_results", {
+                "validation_file": str(ROOT / "tests" / "fixtures" / "analysis_validation.json"),
+                "output_report": str(ROOT / "outputs" / "mcp_analysis_validation.json"),
+            })
+            evidence = json.loads(evidence_result.content[0].text)
+            if evidence.get("status") != "completed":
+                raise AssertionError(f"analysis evidence validation failed: {evidence}")
+            accuracy_result = await session.call_tool("evaluate_lulc_accuracy", {
+                "samples_file": str(ROOT / "tests" / "fixtures" / "lulc_accuracy.csv"),
+                "output": str(ROOT / "outputs" / "mcp_lulc_accuracy.json"),
+            })
+            accuracy = json.loads(accuracy_result.content[0].text)
+            if accuracy.get("status") != "completed" or accuracy["result"]["oa"] <= 0:
+                raise AssertionError(f"LULC accuracy evaluation failed: {accuracy}")
             ecosystem_result = await session.call_tool("evaluate_ecosystem_services", {
                 "criteria_table": str(ROOT / "tests" / "fixtures" / "ecosystem_criteria.csv"),
                 "config": str(ROOT / "tests" / "fixtures" / "ecosystem_service_config.json"),
@@ -88,6 +113,14 @@ async def run() -> None:
             detector = json.loads(detector_result.content[0].text)
             if detector.get("status") != "completed":
                 raise AssertionError(f"ecosystem GeoDetector failed: {detector}")
+            sensitivity_result = await session.call_tool("analyze_ecosystem_sensitivity", {
+                "criteria_table": str(ROOT / "tests" / "fixtures" / "ecosystem_criteria.csv"),
+                "config": str(ROOT / "tests" / "fixtures" / "ecosystem_service_config.json"),
+                "output": str(ROOT / "outputs" / "mcp_ecosystem_sensitivity.csv"),
+            })
+            sensitivity = json.loads(sensitivity_result.content[0].text)
+            if sensitivity.get("status") != "completed":
+                raise AssertionError(f"ecosystem sensitivity analysis failed: {sensitivity}")
             capability_result = await session.call_tool("backend_capabilities", {"backend": "arcgis"})
             capability = json.loads(capability_result.content[0].text)
             if capability.get("status") != "completed":

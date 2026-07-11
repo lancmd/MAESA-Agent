@@ -24,7 +24,7 @@ def main() -> int:
     resource = project["plus"]["resource_extraction"]
     if resource["core_driver"] != "subsidence_depth":
         raise AssertionError("RE core driver must be subsidence depth")
-    print(json.dumps({"status": "passed", "scenarios": scenarios, "core_driver": resource["core_driver"]}))
+    print(json.dumps({"status": "completed", "scenarios": scenarios, "core_driver": resource["core_driver"]}))
     return 0
 
 

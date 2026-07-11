@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Calculate the thesis 4.3 subsidence-water carbon components with explicit units."""
+"""Calculate volume-based subsidence-water carbon components with explicit units."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def calculate_components(*, water_volume_m3: float, water_carbon_density_g_c_m3:
                          aquatic_vegetation_carbon_density_t_c_ha: float,
                          bottom_sediment_area_ha: float,
                          bottom_sediment_carbon_density_t_c_ha: float) -> dict[str, float]:
-    """Implement equations 4.7, 4.9, and the three-component total in thesis section 4.3.
+    """Calculate the three-component total from water volume and two area-density terms.
 
     Water density is g C/m3, so the conversion to t C is division by 1,000,000.
     Vegetation and sediment densities are t C/ha (numerically equal to Mg C/ha).

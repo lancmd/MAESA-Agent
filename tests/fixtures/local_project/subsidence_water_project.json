@@ -25,14 +25,14 @@
   "invest": {"enabled": false},
   "subsidence_water": {
     "enabled": true,
-    "mode": "thesis_4_3_composite",
+    "mode": "composite_subsidence_water_carbon",
     "water_level_elevation_m": 0,
     "output_depth_raster": "outputs/subsidence_water_depth.tif",
     "output_volume_table": "outputs/subsidence_water_volume.csv",
     "output_aquatic_vegetation_raster": "outputs/subsidence_aquatic_vegetation.tif",
     "output_bottom_sediment_raster": "outputs/subsidence_bottom_sediment.tif",
     "output_carbon_table": "outputs/subsidence_water_carbon.csv",
-    "thesis_4_3": {
+    "composite_carbon": {
       "water_carbon_density_g_c_m3": 26.25,
       "aquatic_vegetation_carbon_density_t_c_ha": 0.46,
       "bottom_sediment_carbon_density_t_c_ha": 62.42,

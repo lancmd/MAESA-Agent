@@ -8,9 +8,9 @@
       "capabilities": ["envi.supervised_classification", "system.job_status", "system.list_outputs"]
     },
     "plus": {
-      "transport": "http",
-      "url": "http://127.0.0.1:9883/commands",
-      "capabilities": ["plus.run_scenario", "system.job_status", "system.list_outputs"]
+      "transport": "command",
+      "command": ["{python}", "{skill_root}/scripts/plus_backend.py"],
+      "capabilities": ["plus.run_scenario"]
     },
     "arcgis": {
       "transport": "command",
@@ -30,12 +30,12 @@
     "project": {
       "transport": "command",
       "command": ["{python}", "{skill_root}/scripts/project_backend.py"],
-      "capabilities": ["project.validate"]
+      "capabilities": ["project.validate", "project.compile_workflow", "project.run_workflow", "analysis.validate_results", "analysis.lulc_accuracy", "analysis.plus_validation", "analysis.invest_consistency"]
     },
     "ecosystem": {
       "transport": "command",
       "command": ["{python}", "{skill_root}/scripts/ecosystem_backend.py"],
-      "capabilities": ["ecosystem.evaluate", "ecosystem.tradeoff_analysis", "ecosystem.scenario_compare", "ecosystem.water_yield_calibration", "ecosystem.geodetector_factor_analysis"]
+      "capabilities": ["ecosystem.evaluate", "ecosystem.tradeoff_analysis", "ecosystem.scenario_compare", "ecosystem.water_yield_calibration", "ecosystem.geodetector_factor_analysis", "ecosystem.sensitivity_analysis"]
     }
   }
 }

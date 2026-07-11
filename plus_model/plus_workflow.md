@@ -44,7 +44,7 @@
 - 各地类数量误差和空间配置误差；
 - 多个随机种子重复模拟的均值、标准差和稳定区。
 
-不得只依据一次运行的 Kappa 选择参数。毕佳颖论文案例报告 Kappa 0.89、FoM 0.20，同时指出草地和水体的精细空间位置仍有不确定性；该数值仅是案例结果，不是本 Skill 的验收阈值。详见 `plus_model/calibration_validation.md`。
+不要只依据一次运行的 Kappa 选择参数。参数验收应结合 FoM、关键地类精度、面积误差和多随机种子的稳定性；项目不预设通用的数值阈值。详见 `plus_model/calibration_validation.md`。
 
 ### 阶段 D：土地需求量
 
@@ -86,8 +86,6 @@ plus_outputs/
 
 文件名示例：`lulc_2030_RE_seed03.tif`。不得覆盖不同随机种子或参数组的结果。
 
-## 4. 来源说明
+## 4. 软件资料
 
-本流程吸收了毕佳颖学位论文中淮北矿区 ND、UD、EP、RE 四情景及 PIM–PLUS 耦合思路，并增加历史回代、FoM、多随机种子、网格一致性和积水形成条件验证。论文中的百分比和精度结果均按案例参数管理，不作为全国矿区默认值。
-
-PLUS 的模块定义、软件版本和用户手册以 HPSCIL 官方仓库为准：`https://github.com/HPSCIL/Patch-generating_Land_Use_Simulation_Model`。
+PLUS 的模块定义、软件版本和用户手册以 HPSCIL 官方仓库为准：`https://github.com/HPSCIL/Patch-generating_Land_Use_Simulation_Model`。项目参数应以本地历史回代、规划资料和现场数据为依据。

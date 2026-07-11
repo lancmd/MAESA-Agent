@@ -1,29 +1,35 @@
 # 软件适配器
 
-## 接入原则
+## 本地接入模型
 
-智能体只调用 `interfaces/backend_protocol.md` 中的标准操作，不直接绑定软件安装目录。优先使用 MCP 连接已注册的 HTTP、socket、桌面插件或云端后端；`scripts/workflow_agent.py`、ArcPy 和本地 InVEST CLI 只是协议的一种实现。每个桥接器必须通过 `system.capabilities` 报告真实版本、可用操作、许可/认证状态与限制。
+本项目把 MCP 当作本地进程间的工具协议，而不是软件控制网络。MCP 服务、桥接器和目标软件运行在同一台机器上；连接方式限于本地命令、回环 socket 或回环 HTTP。`interfaces/backend_protocol.md` 规定了请求、状态和产物格式，`interfaces/backend_registry.json` 记录本机已启用的后端。
+
+每个后端通过 `system.capabilities` 说明软件版本、可用操作、许可状态和限制。Agent 依据这份能力信息选择路径，而不是猜测安装位置或命令参数。个人路径通过环境变量或 `config/local_paths.example.json` 配置，不进入共享项目文件。
 
 ## ArcGIS Pro
 
-ArcGIS 桥接器可运行于 Pro 插件、地理处理服务或本地 ArcPy 环境。仓库自带的本地实现通过 `propy.bat` 运行 `scripts/arcgis_ops.py`，支持投影、重采样、掩膜裁剪、坡度坡向、距离栅格、属性表、面积统计和转移组合。分类栅格使用 `NEAREST`，连续栅格默认使用 `BILINEAR`。所有操作设置 `snapRaster`、`cellSize`、`extent` 与 `mask` 时应指向同一主网格。
+本地 ArcGIS 适配器通过 `propy.bat` 调用 `scripts/arcgis_ops.py`。它可以处理投影、重采样、掩膜裁剪、坡度坡向、距离栅格、属性表、面积统计、转移组合和沉陷积水复合碳库。分类栅格采用 `NEAREST`，连续栅格通常采用 `BILINEAR`；同一分析任务使用一致的 `snapRaster`、`cellSize`、`extent` 和 `mask`。
+
+`export_layout` 用于直接导出已有布局；`compose_layout` 则从 `.aprx` 副本出发，将任务列出的成果图层加入目标地图，应用 `.lyrx` 符号，更新标题和地图范围，并导出 PDF/PNG 与布局验证 JSON。任务应给出布局、地图框、图例和符号规则。自动检查覆盖图层、图例元素、范围和分辨率；颜色、标签、顺序和遮挡仍需通过导出图进行视觉复核。
 
 ## InVEST
 
-InVEST 可由远程服务、容器或本地命令桥接器运行 datastack。本地实现使用模型标识 `carbon`，把模型工作目录和任务总工作目录分开。完成后必须检查 InVEST 日志及版本对应产物，并用像元面积乘碳密度进行数量级闭合检查。
+InVEST 通过本机 CLI 或本机容器运行 datastack。模型工作目录与项目工作目录分开保存，便于排查和复跑。完成后读取 InVEST 日志和版本对应的产物，并用像元面积与碳密度进行数量级检查；需要比较时，可将结果与独立的标准 InVEST 运行结果逐栅格或逐汇总表核对。
 
 ## ENVI
 
-ENVI 桥接器在有许可的 ENVI 进程或服务器中实现 `envi.supervised_classification`。仓库的 IDL 模板可作为桥接器内部实现，但 MCP 客户端不需要知道 IDL 路径。最大似然与最小距离应使用同一套训练/验证样本再比较精度。许可初始化失败时阶段状态为 `failed` 或 `waiting_interactive`，不得伪造输出。
+ENVI 桥接器连接本机已经启动且具有许可的 ENVI 会话，实现 `envi.supervised_classification`。仓库中的 IDL 模板可作为桥接器内部实现，MCP 客户端不依赖 IDL 的安装路径。最大似然和最小距离分类共享同一套训练/验证样本后再比较精度。许可或交互登录未完成时，后端会如实返回 `waiting_interactive` 或 `failed`。
 
 ## PyTorch
 
-PyTorch 后端实现 `pytorch.validate_model` 与 `pytorch.run_lulc_inference`。模型以带哈希、类别、波段、归一化和 patch 参数的目录上传，优先使用 `.pt2` ExportedProgram。推理采用重叠分块融合，输出分类与置信度 GeoTIFF；跨区域应用默认标记 `pending_validation`。详细规范见 `deep_learning/pytorch_workflow.md`。
+PyTorch 后端提供 `pytorch.validate_model` 和 `pytorch.run_lulc_inference`。模型包包含哈希、类别、波段、归一化和 patch 参数，优先采用 `.pt2` ExportedProgram。推理使用重叠分块融合，输出分类和置信度 GeoTIFF。没有独立验证样本时，结果状态为 `pending_validation`；验证报告记录 OA、F1、IoU 和各类别精度。
 
 ## PLUS
 
-PLUS 不同发布版本的自动化入口不统一，因此由对应版本的桥接器实现 `plus.run_scenario` 并在能力响应中声明参数模式。桥接器可包装 GUI 插件、宏、进程控制或服务化版本；智能体不得猜测命令行参数。没有桥接器时只能完成输入对齐与任务包，状态标记为 `prepared`。
+PLUS 的自动化入口因发布版本而异，因此 `plus.run_scenario` 由与本机 PLUS 版本匹配的桥接器实现。桥接器可以是本地 GUI 插件、宏、进程控制脚本或进程内 API，并在能力响应中公开支持的参数模式。
 
-## 开放 GIS 后端
+桥接器不存在时，项目后端仍可完成输入对齐、情景参数整理和任务包生成，状态为 `prepared`。若 PLUS 需要用户在本机界面确认，则返回 `waiting_interactive`。这两种状态都不表示 PLUS 已完成预测。完成的后端还应返回每个随机种子的输出、FoM、关键地类精度和稳定性统计。
 
-GDAL、QGIS、GeoPandas、rioxarray 等可用于等价批处理。替换前必须确认分类值不被插值、目标 CRS 合理、像元网格与主栅格严格对齐，并保留命令与版本信息。
+## 开放 GIS 工具
+
+GDAL、QGIS、GeoPandas 和 rioxarray 可承担本地等价批处理。替换某个步骤前，应检查分类值未被插值、目标 CRS 合理、像元网格与主栅格对齐，并保存命令与版本信息。

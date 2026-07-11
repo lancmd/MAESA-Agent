@@ -309,6 +309,53 @@ def geodetector_factor_analysis(samples_table: Path, target_field: str, factor_f
     return {"target_field": target_field, "factor_fields": factor_fields, "output": str(output_path.resolve())}
 
 
+def sensitivity_analysis(criteria_table: Path, config_path: Path, relative_delta: float,
+                         output_path: Path) -> dict[str, Any]:
+    """Perturb each criterion weight and report score and rank sensitivity."""
+    if not math.isfinite(relative_delta) or not 0 < relative_delta < 1:
+        raise ValueError("relative_delta must be between 0 and 1")
+    base_scores = output_path.with_name(output_path.stem + "_base_scores.csv")
+    metadata = evaluate(criteria_table, config_path, base_scores)
+    with base_scores.open("r", encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    fields = metadata["criteria"]
+    base_weights = [float(value) for value in metadata["weights"]]
+    base_values = [float(row["ecosystem_service_score"]) for row in rows]
+
+    def ranks(values: list[float]) -> list[int]:
+        order = sorted(range(len(values)), key=lambda index: (-values[index], index))
+        result = [0] * len(values)
+        for rank, index in enumerate(order, 1):
+            result[index] = rank
+        return result
+
+    base_ranks = ranks(base_values)
+    output_rows: list[dict[str, Any]] = []
+    for field_index, field in enumerate(fields):
+        for direction, factor in (("decrease", 1 - relative_delta), ("increase", 1 + relative_delta)):
+            weights = base_weights.copy()
+            weights[field_index] *= factor
+            weights = normalise_weights(weights)
+            scores = [sum(weights[index] * float(row[f"norm_{name}"]) for index, name in enumerate(fields))
+                      for row in rows]
+            changed_ranks = ranks(scores)
+            differences = [abs(value - base) for value, base in zip(scores, base_values)]
+            rank_shifts = [abs(value - base) for value, base in zip(changed_ranks, base_ranks)]
+            output_rows.append({
+                "criterion": field, "direction": direction, "relative_delta": relative_delta,
+                "perturbed_weight": weights[field_index],
+                "mean_absolute_score_change": sum(differences) / len(differences),
+                "max_absolute_score_change": max(differences),
+                "rank_change_count": sum(shift > 0 for shift in rank_shifts),
+                "max_rank_shift": max(rank_shifts),
+            })
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(output_rows[0])); writer.writeheader(); writer.writerows(output_rows)
+    return {"relative_delta": relative_delta, "criteria": fields, "base_scores": str(base_scores.resolve()),
+            "output": str(output_path.resolve()), "maximum_rank_shift": max(row["max_rank_shift"] for row in output_rows)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--criteria-table", required=True, type=Path)

@@ -7,6 +7,7 @@
     "roi": "replace_with_roi.gpkg",
     "mine_boundary": "replace_with_mine_boundary.gpkg",
     "carbon_density": "replace_with_carbon_density.csv",
+    "historical_lulc": [],
     "lulc_baseline": null,
     "training_roi": null,
     "model_package": null,
@@ -65,7 +66,8 @@
   "invest": {
     "enabled": true,
     "lulc_source": "classification",
-    "output_workspace": "outputs/invest"
+    "output_workspace": "outputs/invest",
+    "datastack": null
   },
   "subsidence_water": {
     "enabled": false,
@@ -77,7 +79,7 @@
     "output_aquatic_vegetation_raster": "outputs/subsidence_aquatic_vegetation.tif",
     "output_bottom_sediment_raster": "outputs/subsidence_bottom_sediment.tif",
     "output_carbon_table": "outputs/subsidence_water_carbon.csv",
-    "thesis_4_3": {
+    "composite_carbon": {
       "water_carbon_density_g_c_m3": null,
       "aquatic_vegetation_carbon_density_t_c_ha": null,
       "bottom_sediment_carbon_density_t_c_ha": null,
@@ -110,7 +112,21 @@
     "enabled": true,
     "aprx": null,
     "layout_name": null,
+    "map_name": null,
+    "map_frame_name": null,
+    "extent_from_layer": null,
+    "aprx_output": "outputs/maps/composed_project.aprx",
+    "title_element_name": null,
+    "title_text": null,
+    "legend_name": null,
+    "layers": [],
+    "resolution": 300,
     "pdf": "outputs/maps/final_layout.pdf",
     "png": "outputs/maps/final_layout.png"
+  },
+  "validation": {
+    "enabled": false,
+    "evidence_file": null,
+    "output_report": "validation/analysis_validation_report.json"
   }
 }

@@ -14,7 +14,7 @@ REQUIRED_CARBON_COLUMNS = {"lucode", "c_above", "c_below", "c_soil", "c_dead"}
 VALID_ENGINES = {"envi", "pytorch", "provided_lulc"}
 VALID_ECOSYSTEM_METHODS = {"minmax", "ahp"}
 VALID_PLUS_SCENARIOS = {"ND", "UD", "EP", "RE"}
-VALID_SUBSIDENCE_WATER_MODES = {"classify_only", "estimate_volume", "thesis_4_3_composite"}
+VALID_SUBSIDENCE_WATER_MODES = {"classify_only", "estimate_volume", "composite_subsidence_water_carbon"}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -92,6 +92,12 @@ def validate(project_path: Path) -> dict[str, Any]:
 
     plus = project.get("plus", {})
     if plus.get("enabled"):
+        historical_lulc = inputs.get("historical_lulc", [])
+        if not isinstance(historical_lulc, list) or len(historical_lulc) < 2:
+            errors.append("PLUS requires at least two historical_lulc rasters for backcasting")
+        else:
+            for index, item in enumerate(historical_lulc):
+                required_path(f"historical_lulc[{index}]", item, base, errors)
         factors = inputs.get("driver_factors", {})
         supplied = [key for key, value in factors.items() if value]
         if not supplied:
@@ -154,11 +160,11 @@ def validate(project_path: Path) -> dict[str, Any]:
         mode = subsidence.get("mode")
         if mode not in VALID_SUBSIDENCE_WATER_MODES:
             errors.append(f"subsidence_water.mode must be one of {sorted(VALID_SUBSIDENCE_WATER_MODES)}")
-    if subsidence.get("enabled") and subsidence.get("mode") in {"estimate_volume", "thesis_4_3_composite"}:
+    if subsidence.get("enabled") and subsidence.get("mode") in {"estimate_volume", "composite_subsidence_water_carbon"}:
         required_path("dem", inputs.get("dem"), base, errors)
-        if not inputs.get("subsidence_depth_raster") and not inputs.get("subsidence_w_dat"):
-            errors.append("subsidence volume requires subsidence_depth_raster or subsidence_w_dat")
-        if inputs.get("subsidence_depth_raster"):
+        if not inputs.get("subsidence_depth_raster"):
+            errors.append("subsidence volume requires a preprocessed, aligned subsidence_depth_raster; raw w.dat is a source record, not a depth raster")
+        else:
             required_path("subsidence_depth_raster", inputs.get("subsidence_depth_raster"), base, errors)
         if inputs.get("subsidence_w_dat"):
             required_path("subsidence_w_dat", inputs.get("subsidence_w_dat"), base, errors)
@@ -169,49 +175,49 @@ def validate(project_path: Path) -> dict[str, Any]:
             errors.append("subsidence volume requires water_level_elevation_m")
         warnings.append("W data describes ground subsidence, not water depth; calculate water depth from DEM and water level.")
 
-    if subsidence.get("enabled") and subsidence.get("mode") == "thesis_4_3_composite":
-        # Thesis 4.3 requires the observed water boundary to be matched to the PIM-derived terrain.
+    if subsidence.get("enabled") and subsidence.get("mode") == "composite_subsidence_water_carbon":
+        # Composite carbon requires the observed water boundary to be matched to PIM-derived terrain.
         required_path("subsidence_depth_raster", inputs.get("subsidence_depth_raster"), base, errors)
         required_path("subsidence_water_boundary", inputs.get("subsidence_water_boundary"), base, errors)
         if inputs.get("aquatic_vegetation_boundary"):
             required_path("aquatic_vegetation_boundary", inputs.get("aquatic_vegetation_boundary"), base, errors)
         if inputs.get("bottom_sediment_boundary"):
             required_path("bottom_sediment_boundary", inputs.get("bottom_sediment_boundary"), base, errors)
-        thesis = subsidence.get("thesis_4_3", {})
+        composite = subsidence.get("composite_carbon", {})
         for field in (
             "water_carbon_density_g_c_m3", "aquatic_vegetation_carbon_density_t_c_ha",
             "bottom_sediment_carbon_density_t_c_ha",
         ):
-            value = thesis.get(field)
+            value = composite.get(field)
             if not isinstance(value, (int, float)) or value < 0:
-                errors.append(f"subsidence_water.thesis_4_3.{field} must be a non-negative number")
+                errors.append(f"subsidence_water.composite_carbon.{field} must be a non-negative number")
         if not inputs.get("aquatic_vegetation_boundary"):
-            threshold = thesis.get("aquatic_vegetation_depth_threshold_m")
+            threshold = composite.get("aquatic_vegetation_depth_threshold_m")
             if not isinstance(threshold, (int, float)) or threshold < 0:
                 errors.append(
                     "provide aquatic_vegetation_boundary or a non-negative "
-                    "subsidence_water.thesis_4_3.aquatic_vegetation_depth_threshold_m"
+                    "subsidence_water.composite_carbon.aquatic_vegetation_depth_threshold_m"
                 )
             else:
                 warnings.append("Aquatic vegetation area from a depth threshold is potential cover and needs field/imagery validation.")
-        if not inputs.get("bottom_sediment_boundary") and thesis.get("bottom_sediment_assume_full_waterbed") is not True:
+        if not inputs.get("bottom_sediment_boundary") and composite.get("bottom_sediment_assume_full_waterbed") is not True:
             errors.append("provide bottom_sediment_boundary or explicitly set bottom_sediment_assume_full_waterbed to true")
         for field in (
             "output_depth_raster", "output_volume_table", "output_aquatic_vegetation_raster",
             "output_bottom_sediment_raster", "output_carbon_table",
         ):
             if not subsidence.get(field):
-                errors.append(f"subsidence_water.{field} is required for thesis_4_3_composite")
-        invest_total = thesis.get("invest_total_carbon_t_c")
-        invest_water = thesis.get("invest_subsidence_water_carbon_t_c")
+                errors.append(f"subsidence_water.{field} is required for composite_subsidence_water_carbon")
+        invest_total = composite.get("invest_total_carbon_t_c")
+        invest_water = composite.get("invest_subsidence_water_carbon_t_c")
         if (invest_total is None) != (invest_water is None):
             errors.append(
-                "thesis_4_3 invest_total_carbon_t_c and invest_subsidence_water_carbon_t_c must be supplied together"
+                "composite_carbon invest_total_carbon_t_c and invest_subsidence_water_carbon_t_c must be supplied together"
             )
         for field in ("invest_total_carbon_t_c", "invest_subsidence_water_carbon_t_c"):
-            value = thesis.get(field)
+            value = composite.get(field)
             if value is not None and (not isinstance(value, (int, float)) or value < 0):
-                errors.append(f"subsidence_water.thesis_4_3.{field} must be a non-negative number when supplied")
+                errors.append(f"subsidence_water.composite_carbon.{field} must be a non-negative number when supplied")
 
     ecosystem = project.get("ecosystem_service", {})
     if ecosystem.get("enabled"):
@@ -234,6 +240,19 @@ def validate(project_path: Path) -> dict[str, Any]:
             errors.append("gis_outputs.layout_name is required when GIS outputs are enabled")
         if not gis_outputs.get("pdf") and not gis_outputs.get("png"):
             errors.append("configure gis_outputs.pdf and/or gis_outputs.png")
+        layers = gis_outputs.get("layers", [])
+        if not isinstance(layers, list) or not layers:
+            errors.append("gis_outputs.layers must contain the result layers to add to the layout")
+        else:
+            for index, layer in enumerate(layers):
+                if not isinstance(layer, dict) or not layer.get("path"):
+                    errors.append(f"gis_outputs.layers[{index}].path is required")
+
+    validation = project.get("validation", {})
+    if validation.get("enabled"):
+        required_path("validation.evidence_file", validation.get("evidence_file"), base, errors)
+        if not validation.get("output_report"):
+            errors.append("validation.output_report is required when validation is enabled")
 
     return {"status": "valid" if not errors else "invalid", "project_id": project.get("project_id"),
             "errors": errors, "warnings": warnings}

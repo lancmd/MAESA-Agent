@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "reports": {
+    "lulc": {
+      "metrics": {
+        "oa": 0.91,
+        "f1": 0.88,
+        "iou": 0.79,
+        "classes": {
+          "cropland": {"precision": 0.9, "recall": 0.87, "f1": 0.88, "iou": 0.79}
+        }
+      }
+    },
+    "plus": {
+      "fom": 0.23,
+      "classes": {"cropland": {"f1": 0.81, "iou": 0.69}},
+      "seed_metrics": [{"seed": 1, "fom": 0.23}, {"seed": 2, "fom": 0.22}]
+    },
+    "invest": {
+      "workflow_total_t_c": 1000.0,
+      "independent_total_t_c": 1000.2,
+      "relative_tolerance": 0.001
+    },
+    "ecosystem": {
+      "method": "ahp",
+      "normalised_ranges": {"carbon": [0.0, 1.0], "water_yield": [0.0, 1.0]},
+      "ahp_consistency_ratio": 0.04,
+      "sensitivity": {"weight_delta": 0.1, "rank_change_count": 2}
+    },
+    "map": {
+      "expected_layers": ["LULC", "Carbon"],
+      "actual_layers": ["LULC", "Carbon"],
+      "legend_accuracy": 1,
+      "extent": [500000, 3700000, 501000, 3701000],
+      "resolution": 300
+    }
+  }
+}

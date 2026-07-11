@@ -15,6 +15,7 @@ from ecosystem_service import (  # noqa: E402
     evaluate,
     geodetector_factor_analysis,
     scenario_compare,
+    sensitivity_analysis,
     tradeoff_analysis,
 )
 
@@ -25,6 +26,7 @@ def main() -> int:
         result = {"status": "completed", "result": {"backend": "ecosystem", "operations": [
             "system.capabilities", "ecosystem.evaluate", "ecosystem.tradeoff_analysis",
             "ecosystem.scenario_compare", "ecosystem.water_yield_calibration", "ecosystem.geodetector_factor_analysis",
+            "ecosystem.sensitivity_analysis",
         ]}}
     elif envelope.get("operation") == "ecosystem.evaluate":
         params = envelope["parameters"]
@@ -54,6 +56,13 @@ def main() -> int:
         report = geodetector_factor_analysis(Path(params["samples_table"]).expanduser().resolve(), params["target_field"],
                                              params["factor_fields"], Path(params["output"]).expanduser().resolve())
         result = {"status": "completed", "result": report, "outputs": [report["output"]]}
+    elif envelope.get("operation") == "ecosystem.sensitivity_analysis":
+        params = envelope["parameters"]
+        report = sensitivity_analysis(Path(params["criteria_table"]).expanduser().resolve(),
+                                      Path(params["config"]).expanduser().resolve(),
+                                      float(params.get("relative_delta", 0.1)),
+                                      Path(params["output"]).expanduser().resolve())
+        result = {"status": "completed", "result": report, "outputs": [report["output"], report["base_scores"]]}
     else:
         result = {"status": "failed", "error": "unsupported ecosystem operation"}
     result.update({"protocol_version": "1.0", "request_id": envelope.get("request_id")})

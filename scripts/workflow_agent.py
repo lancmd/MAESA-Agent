@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -40,31 +41,43 @@ def first_existing(candidates: list[str | None]) -> str | None:
     return None
 
 
+def local_paths() -> dict[str, Any]:
+    """Read optional machine-specific paths without committing them to the repository."""
+    configured = os.getenv("MINING_GIS_LOCAL_PATHS")
+    path = Path(configured).expanduser() if configured else ROOT / "config" / "local_paths.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = load_json(path.resolve())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot read local paths configuration: {path}: {error}") from error
+    if not isinstance(payload, dict):
+        raise ValueError("local paths configuration must be a JSON object")
+    return {str(key): os.path.expandvars(value) if isinstance(value, str) else value
+            for key, value in payload.items()}
+
+
 def probe_software(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     overrides = overrides or {}
+    configured = local_paths()
     path_candidates = {
         "arcgis_propy": [
-            overrides.get("arcgis_propy"), os.getenv("ARCGIS_PROPY"),
+            overrides.get("arcgis_propy"), configured.get("arcgis_propy"), os.getenv("ARCGIS_PROPY"),
             shutil.which("propy.bat"),
-            r"E:\ArcgisPro3.01\PRO\bin\Python\Scripts\propy.bat",
-            r"C:\Program Files\ArcGIS\Pro\bin\Python\Scripts\propy.bat",
         ],
         "arcgis_pro": [
-            overrides.get("arcgis_pro"), os.getenv("ARCGIS_PRO_EXE"),
-            r"E:\ArcgisPro3.01\PRO\bin\ArcGISPro.exe",
-            r"C:\Program Files\ArcGIS\Pro\bin\ArcGISPro.exe",
+            overrides.get("arcgis_pro"), configured.get("arcgis_pro"), os.getenv("ARCGIS_PRO_EXE"),
+            shutil.which("ArcGISPro.exe"),
         ],
         "invest": [
-            overrides.get("invest"), os.getenv("INVEST_CLI"), shutil.which("invest"),
-            r"E:\InVEST_3.12.1_x64\invest-3-x64\invest.exe",
+            overrides.get("invest"), configured.get("invest"), os.getenv("INVEST_CLI"), shutil.which("invest"),
         ],
         "idl": [
-            overrides.get("idl"), os.getenv("IDL_EXE"), shutil.which("idl"),
-            r"C:\ruanjian\envi5.6\ENVI56\IDL88\bin\bin.x86_64\idl.exe",
+            overrides.get("idl"), configured.get("idl"), os.getenv("IDL_EXE"), shutil.which("idl"),
         ],
-        "plus": [overrides.get("plus"), os.getenv("PLUS_EXE")],
+        "plus": [overrides.get("plus"), configured.get("plus"), os.getenv("PLUS_EXE"), shutil.which("PLUS.exe")],
         "gdalinfo": [
-            overrides.get("gdalinfo"), os.getenv("GDALINFO"), shutil.which("gdalinfo"),
+            overrides.get("gdalinfo"), configured.get("gdalinfo"), os.getenv("GDALINFO"), shutil.which("gdalinfo"),
         ],
     }
     result: dict[str, Any] = {"probed_at": now(), "platform": sys.platform, "software": {}}
@@ -167,6 +180,16 @@ class JobRunner:
     def run_invest(self, stage: dict[str, Any]) -> dict[str, Any]:
         executable = self.probe["software"]["invest"]["path"]
         datastack = self.stage_path(stage["datastack"])
+        payload = load_json(datastack)
+        if not payload.get("invest_version"):
+            version_process = subprocess.run([executable, "--version"], text=True, stdout=subprocess.PIPE,
+                                             stderr=subprocess.STDOUT, encoding="utf-8", errors="replace", check=False)
+            version = (version_process.stdout or "").strip().splitlines()[-1] if version_process.stdout else ""
+            if version_process.returncode or not re.match(r"^\d+(?:\.\d+)+", version):
+                raise RuntimeError("cannot determine the local InVEST version for the generated datastack")
+            payload["invest_version"] = version
+            datastack = self.workspace / "generated" / f"{stage['id']}_runtime_datastack.json"
+            write_json(datastack, payload)
         model_workspace = self.stage_path(stage.get("model_workspace", f"outputs/{stage['id']}"))
         model_workspace.mkdir(parents=True, exist_ok=True)
         args = [executable, "run", stage.get("model", "carbon"), "-l", "-d", str(datastack),
@@ -183,6 +206,26 @@ class JobRunner:
         return self.command(stage["id"], [executable, "-e", expression], env=env)
 
     def run_plus(self, stage: dict[str, Any]) -> dict[str, Any]:
+        if stage.get("request"):
+            envelope = dict(stage["request"])
+            parameters = dict(envelope.get("parameters", {}))
+            parameters.setdefault("workspace", str(self.workspace / "outputs" / "plus"))
+            envelope["parameters"] = parameters
+            log_path = self.workspace / "logs" / f"{stage['id']}.log"
+            if self.dry_run:
+                return {"status": "prepared", "request": envelope, "log": str(log_path), "dry_run": True}
+            process = subprocess.run([sys.executable, str(ROOT / "scripts" / "plus_backend.py")],
+                                     input=json.dumps(envelope, ensure_ascii=True), text=True,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
+                                     errors="replace", check=False)
+            log_path.write_text(process.stdout or "", encoding="utf-8")
+            if process.returncode:
+                raise RuntimeError(f"local PLUS bridge returned {process.returncode}; see {log_path}")
+            result = json.loads(process.stdout)
+            if result.get("status") == "failed":
+                raise RuntimeError(result.get("error", "local PLUS bridge failed"))
+            return {"status": result.get("status", "failed"), "outputs": result.get("outputs", []),
+                    "message": result.get("message"), "log": str(log_path)}
         executable = stage.get("executable") or self.probe["software"]["plus"]["path"]
         if stage.get("command_args"):
             if not executable:

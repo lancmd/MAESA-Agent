@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "demo_metadata": {
+    "synthetic": true,
+    "not_for_scientific_interpretation": true,
+    "expected_workflow_stage_ids": ["plus_ND", "plus_UD", "plus_EP", "plus_RE", "invest_carbon", "ecosystem_service"],
+    "note": "These deterministic values test report structure and acceptance checks. They are not evidence for a real mining area."
+  },
+  "reports": {
+    "lulc": {
+      "metrics": {
+        "oa": 0.934,
+        "f1": 0.913,
+        "iou": 0.846,
+        "classes": {
+          "class_1": {"precision": 0.95, "recall": 0.92, "f1": 0.935, "iou": 0.878},
+          "class_3": {"precision": 0.91, "recall": 0.90, "f1": 0.905, "iou": 0.826},
+          "class_7": {"precision": 0.93, "recall": 0.94, "f1": 0.935, "iou": 0.878}
+        }
+      }
+    },
+    "plus": {
+      "fom": 0.214,
+      "classes": {
+        "class_1": {"f1": 0.81, "iou": 0.681},
+        "class_3": {"f1": 0.76, "iou": 0.613},
+        "class_7": {"f1": 0.79, "iou": 0.653}
+      },
+      "seed_metrics": [
+        {"seed": 11, "fom": 0.214},
+        {"seed": 29, "fom": 0.209},
+        {"seed": 47, "fom": 0.218}
+      ]
+    },
+    "invest": {
+      "workflow_total_t_c": 5120.0,
+      "independent_total_t_c": 5120.0,
+      "relative_tolerance": 0.001
+    },
+    "ecosystem": {
+      "method": "ahp",
+      "normalised_ranges": {
+        "carbon_storage_t_c": [0.0, 1.0],
+        "annual_water_yield_m3": [0.0, 1.0],
+        "habitat_quality": [0.0, 1.0]
+      },
+      "ahp_consistency_ratio": 0.0,
+      "sensitivity": {
+        "weight_delta": 0.1,
+        "ranking_changed": false
+      }
+    },
+    "map": {
+      "expected_layers": ["LULC_2025", "SubsidenceDepth", "MineBoundary"],
+      "actual_layers": ["LULC_2025", "SubsidenceDepth", "MineBoundary"],
+      "legend_accuracy": 1,
+      "extent": [500000.0, 4000000.0, 501920.0, 4001920.0],
+      "resolution": 300
+    }
+  }
+}

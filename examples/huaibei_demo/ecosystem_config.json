@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "method": "ahp",
+  "id_field": "unit_id",
+  "passthrough_fields": ["scenario"],
+  "normalization": {
+    "bounds": {}
+  },
+  "criteria": [
+    {"field": "carbon_storage_t_c", "direction": "benefit", "weight": 0.4},
+    {"field": "annual_water_yield_m3", "direction": "benefit", "weight": 0.3},
+    {"field": "habitat_quality", "direction": "benefit", "weight": 0.3}
+  ],
+  "ahp": {
+    "pairwise_matrix": [[1, 2, 2], [0.5, 1, 1], [0.5, 1, 1]],
+    "consistency_threshold": 0.1
+  }
+}

@@ -7,6 +7,7 @@
     "roi": "roi.gpkg",
     "mine_boundary": "mine_boundary.gpkg",
     "carbon_density": "carbon_density.csv",
+    "historical_lulc": ["imagery.tif", "subsidence_depth_aligned.tif"],
     "lulc_baseline": "imagery.tif",
     "training_roi": null,
     "model_package": null,

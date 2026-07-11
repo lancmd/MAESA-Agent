@@ -5,12 +5,23 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import ipaddress
 import json
 import socketserver
 from typing import Any, Callable
 
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+def is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower().strip("[]")
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 def load_handler(locator: str) -> Handler:
@@ -56,6 +67,8 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", required=True, type=int)
     args = parser.parse_args()
+    if not is_loopback_host(args.host):
+        raise SystemExit("software bridge may bind only to localhost/127.0.0.1/::1")
     handler = load_handler(args.handler)
     with ThreadedServer((args.host, args.port), request_handler(handler)) as server:
         print(json.dumps({"status": "ready", "host": args.host, "port": args.port,

@@ -1,0 +1,9 @@
+# Re-created by synthetic_data.py; do not commit generated spatial inputs or runs.
+data/*.tif
+data/*.geojson
+data/*.dat
+data/*.csv
+data/model_package/
+runtime/
+*.pyc
+__pycache__/

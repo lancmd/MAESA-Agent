@@ -54,8 +54,8 @@
       "dtype": "Int16-or-Float32",
       "bands": ["band-name"],
       "sha256": "output-file-sha256",
-      "technical_validation": "passed-pending-failed",
-      "classification_accuracy": "passed-pending-not-applicable"
+      "technical_validation": "passed-pending_validation-failed",
+      "classification_accuracy": "passed-pending_validation-not-applicable"
     }
   ]
 }

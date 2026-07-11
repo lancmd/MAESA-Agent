@@ -1,0 +1,9 @@
+{
+  "arcgis_propy": "${ARCGIS_PROPY}",
+  "arcgis_pro": "${ARCGIS_PRO_EXE}",
+  "invest": "${INVEST_CLI}",
+  "idl": "${IDL_EXE}",
+  "plus": "${PLUS_EXE}",
+  "gdalinfo": "${GDALINFO}",
+  "plus_bridge_command": []
+}

@@ -15,7 +15,7 @@ from subsidence_water_carbon import calculate_components, calculate_invest_repla
 SUPPORTED = {
     "describe", "project_raster", "resample", "extract_by_mask", "slope_aspect",
     "distance_accumulation", "build_raster_attribute_table", "class_area", "combine_transition",
-    "w_points_to_raster", "subsidence_water_volume", "subsidence_water_carbon", "export_layout"
+    "w_points_to_raster", "subsidence_water_volume", "subsidence_water_carbon", "export_layout", "compose_layout"
 }
 
 
@@ -40,7 +40,7 @@ def validate(spec: dict[str, Any]) -> list[str]:
             errors.append(f"operation {op_id}: unsupported type {op_type}")
         input_optional = {
             "combine_transition", "w_points_to_raster", "subsidence_water_volume", "subsidence_water_carbon",
-            "export_layout"
+            "export_layout", "compose_layout"
         }
         if op_type not in input_optional and not operation.get("input"):
             errors.append(f"operation {op_id}: input is required")
@@ -94,6 +94,19 @@ def validate(spec: dict[str, Any]) -> list[str]:
             for field in ("aprx", "layout_name"):
                 if operation.get(field) in (None, ""):
                     errors.append(f"operation {op_id}: {field} is required")
+        if op_type == "compose_layout":
+            for field in ("aprx", "layout_name", "validation_output"):
+                if operation.get(field) in (None, ""):
+                    errors.append(f"operation {op_id}: {field} is required")
+            layers = operation.get("layers", [])
+            if not isinstance(layers, list) or not layers:
+                errors.append(f"operation {op_id}: layers must be a non-empty list")
+            else:
+                for layer_index, layer in enumerate(layers):
+                    if not isinstance(layer, dict) or not layer.get("path"):
+                        errors.append(f"operation {op_id}: layers[{layer_index}].path is required")
+            if not operation.get("pdf") and not operation.get("png"):
+                errors.append(f"operation {op_id}: configure pdf and/or png")
     return errors
 
 
@@ -104,6 +117,76 @@ def resolve(value: str, workspace: Path) -> str:
 
 def ensure_parent(value: str) -> None:
     Path(value).parent.mkdir(parents=True, exist_ok=True)
+
+
+def layout_element(layout: Any, element_type: str, name: str | None) -> Any | None:
+    elements = layout.listElements(element_type, name) if name else layout.listElements(element_type)
+    return elements[0] if elements else None
+
+
+def compose_layout(arcpy: Any, operation: dict[str, Any], workspace: Path) -> None:
+    """Build an output copy of an APRX, add result layers, apply supplied symbols, and export a checked layout."""
+    source_aprx = resolve(operation["aprx"], workspace)
+    output_aprx = resolve(operation.get("aprx_output", f"intermediate/{operation['id']}.aprx"), workspace)
+    ensure_parent(output_aprx)
+    source = arcpy.mp.ArcGISProject(source_aprx)
+    source.saveACopy(output_aprx)
+    aprx = arcpy.mp.ArcGISProject(output_aprx)
+    layouts = [item for item in aprx.listLayouts() if item.name == operation["layout_name"]]
+    if not layouts:
+        raise RuntimeError(f"layout not found: {operation['layout_name']}")
+    layout = layouts[0]
+    maps = [item for item in aprx.listMaps() if item.name == operation.get("map_name")] if operation.get("map_name") else aprx.listMaps()
+    if not maps:
+        raise RuntimeError("map not found for layout composition")
+    target_map = maps[0]
+    expected_layers: list[str] = []
+    for definition in operation.get("layers", []):
+        path = resolve(definition["path"], workspace)
+        layer = target_map.addDataFromPath(path)
+        name = definition.get("name") or Path(path).stem
+        layer.name = name
+        expected_layers.append(name)
+        if definition.get("symbology_layer"):
+            arcpy.management.ApplySymbologyFromLayer(layer, resolve(definition["symbology_layer"], workspace))
+        if "visible" in definition:
+            layer.visible = bool(definition["visible"])
+    if operation.get("title_text"):
+        title = layout_element(layout, "TEXT_ELEMENT", operation.get("title_element_name"))
+        if not title:
+            raise RuntimeError("title text element not found")
+        title.text = str(operation["title_text"])
+    legend = layout_element(layout, "LEGEND_ELEMENT", operation.get("legend_name"))
+    frame = layout_element(layout, "MAPFRAME_ELEMENT", operation.get("map_frame_name"))
+    if frame and operation.get("extent_from_layer"):
+        matching = [item for item in target_map.listLayers() if item.name == operation["extent_from_layer"]]
+        if not matching:
+            raise RuntimeError(f"extent layer not found: {operation['extent_from_layer']}")
+        frame.camera.setExtent(frame.getLayerExtent(matching[0], True, True))
+    aprx.save()
+    resolution = int(operation.get("resolution", 300))
+    exports: dict[str, str] = {}
+    if operation.get("pdf"):
+        pdf = resolve(operation["pdf"], workspace); ensure_parent(pdf)
+        layout.exportToPDF(pdf, resolution=resolution); exports["pdf"] = pdf
+    if operation.get("png"):
+        png = resolve(operation["png"], workspace); ensure_parent(png)
+        layout.exportToPNG(png, resolution=resolution); exports["png"] = png
+    actual_layers = [item.name for item in target_map.listLayers()]
+    extent = None
+    if frame:
+        camera_extent = frame.camera.getExtent()
+        extent = [camera_extent.XMin, camera_extent.YMin, camera_extent.XMax, camera_extent.YMax]
+    report = {
+        "aprx": output_aprx, "layout": layout.name, "map": target_map.name,
+        "expected_layers": expected_layers, "actual_layers": actual_layers,
+        "missing_layers": sorted(set(expected_layers) - set(actual_layers)),
+        "legend_present": bool(legend), "legend_requires_visual_check": True,
+        "extent": extent, "resolution": resolution, "exports": exports,
+    }
+    validation_output = resolve(operation["validation_output"], workspace)
+    ensure_parent(validation_output)
+    Path(validation_output).write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def subsidence_water_depth(arcpy: Any, operation: dict[str, Any], workspace: Path) -> tuple[Any, float]:
@@ -263,7 +346,7 @@ def execute_operation(arcpy: Any, operation: dict[str, Any], workspace: Path) ->
             writer.writerow(["water_level_elevation_m", "sum_water_depth_m", "pixel_area_m2", "water_volume_m3"])
             writer.writerow([water_level, sum_depth, pixel_area_m2, sum_depth * pixel_area_m2])
     elif op_type == "subsidence_water_carbon":
-        # Implements the thesis section 4.3 chain: observed water boundary + subsidence terrain -> volume -> 3 components.
+        # Observed water boundary plus subsidence terrain produces volume and three carbon components.
         depth, water_level = subsidence_water_depth(arcpy, operation, workspace)
         depth_output = resolve(operation["water_depth_output"], workspace); ensure_parent(depth_output)
         depth.save(depth_output)
@@ -371,6 +454,8 @@ def execute_operation(arcpy: Any, operation: dict[str, Any], workspace: Path) ->
         if operation.get("png"):
             png = resolve(operation["png"], workspace); ensure_parent(png)
             layout.exportToPNG(png, resolution=resolution)
+    elif op_type == "compose_layout":
+        compose_layout(arcpy, operation, workspace)
 
 
 def main() -> int:

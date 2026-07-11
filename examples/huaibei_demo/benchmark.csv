@@ -1,0 +1,9 @@
+stage,metric,scope,expected_value,tolerance,note
+lulc,oa,overall,0.934,0.000001,Deterministic synthetic acceptance value
+lulc,f1,overall,0.913,0.000001,Deterministic synthetic acceptance value
+lulc,iou,overall,0.846,0.000001,Deterministic synthetic acceptance value
+plus,fom,backcast,0.214,0.000001,Three-seed synthetic reference
+plus,fom_population_std,three_seeds,0.003682,0.00001,Computed from seed FoM values
+invest,relative_difference,total_carbon,0.0,0.001,Workflow versus independent synthetic run
+ecosystem,ahp_consistency_ratio,weight_matrix,0.0,0.1,Reciprocal synthetic weight matrix
+map,legend_accuracy,expected_layers,1.0,0.0,Requires all expected symbols to be checked

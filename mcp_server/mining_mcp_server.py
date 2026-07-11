@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Backend-neutral MCP server for mining-area GIS operations."""
+"""Local-first MCP server for mining-area GIS operations."""
 
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import socket
@@ -13,6 +14,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 from urllib import request
+from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 
@@ -21,6 +23,29 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = ROOT / "interfaces" / "backend_registry.json"
 EXAMPLE_REGISTRY = ROOT / "interfaces" / "backend_registry.example.json"
 VALID_PLUS_SCENARIOS = frozenset({"ND", "UD", "EP", "RE"})
+
+
+def is_loopback_host(host: str | None) -> bool:
+    """Accept only local endpoints; MCP is a local process protocol in this project."""
+    if not host:
+        return False
+    normalized = host.strip().lower().strip("[]")
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def require_local_transport(config: dict[str, Any]) -> None:
+    transport = config.get("transport")
+    if transport == "socket" and not is_loopback_host(str(config.get("host", "127.0.0.1"))):
+        raise ValueError("socket backend must use a loopback host; remote software control is disabled")
+    if transport == "http":
+        parsed = urlparse(str(config.get("url", "")))
+        if parsed.scheme != "http" or not is_loopback_host(parsed.hostname):
+            raise ValueError("HTTP backend must use a loopback http:// endpoint; remote software control is disabled")
 
 
 def json_result(value: Any) -> str:
@@ -59,9 +84,9 @@ class BackendRegistry:
             "request_id": str(uuid.uuid4()),
             "operation": operation,
             "parameters": parameters,
-            "callback_url": None,
         }
         try:
+            require_local_transport(config)
             transport = config.get("transport")
             if transport == "http":
                 return self._http(config, envelope)
@@ -76,9 +101,6 @@ class BackendRegistry:
     @staticmethod
     def _http(config: dict[str, Any], envelope: dict[str, Any]) -> dict[str, Any]:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
-        token_env = config.get("token_env")
-        if token_env and os.getenv(token_env):
-            headers["Authorization"] = f"Bearer {os.environ[token_env]}"
         req = request.Request(config["url"], data=json.dumps(envelope).encode("utf-8"), headers=headers, method="POST")
         with request.urlopen(req, timeout=float(config.get("timeout", 600))) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -121,8 +143,8 @@ registry = BackendRegistry()
 mcp = FastMCP(
     "mining-gis",
     instructions=(
-        "Execute mining-area GIS tasks through registered software backends. "
-        "Call list_backends first, use structured tools, and never claim prepared scripts are completed outputs."
+        "Execute mining-area GIS tasks through local software backends only. "
+        "Use structured tools and distinguish completed results from prepared task packages."
     ),
 )
 
@@ -149,6 +171,64 @@ def inspect_dataset(path: str, backend: str = "arcgis") -> str:
 def validate_local_project(project_file: str, backend: str = "project") -> str:
     """Validate all local imagery, ROI, carbon-density, driver-factor and optional subsidence inputs before execution."""
     return json_result(registry.call(backend, "project.validate", {"project_file": project_file}))
+
+
+@mcp.tool()
+def compile_project_workflow(project_file: str, output_job: str | None = None, backend: str = "project") -> str:
+    """Validate a local project and compile it into an executable workflow job; no manual workflow_job editing is needed."""
+    return json_result(registry.call(backend, "project.compile_workflow", {
+        "project_file": project_file, "output_job": output_job,
+    }))
+
+
+@mcp.tool()
+def run_local_project(project_file: str, output_job: str | None = None, dry_run: bool = False,
+                      continue_on_error: bool = False, backend: str = "project") -> str:
+    """Compile and run the locally available stages from one project configuration, preserving logs and stage state."""
+    return json_result(registry.call(backend, "project.run_workflow", {
+        "project_file": project_file, "output_job": output_job, "dry_run": dry_run,
+        "continue_on_error": continue_on_error,
+    }))
+
+
+@mcp.tool()
+def validate_analysis_results(validation_file: str, output_report: str | None = None,
+                              backend: str = "project") -> str:
+    """Check LULC, PLUS, InVEST, ecosystem-service, and map-quality evidence rather than only task completion."""
+    return json_result(registry.call(backend, "analysis.validate_results", {
+        "validation_file": validation_file, "output_report": output_report,
+    }))
+
+
+@mcp.tool()
+def evaluate_lulc_accuracy(samples_file: str, output: str, reference_field: str = "reference",
+                           prediction_field: str = "prediction", backend: str = "project") -> str:
+    """Calculate OA, macro F1/IoU, and per-class precision, recall, F1, and IoU from validation samples."""
+    return json_result(registry.call(backend, "analysis.lulc_accuracy", {
+        "samples_file": samples_file, "reference_field": reference_field,
+        "prediction_field": prediction_field, "output": output,
+    }))
+
+
+@mcp.tool()
+def validate_plus_backcast(reference_raster: str, predicted_raster: str, baseline_raster: str,
+                           output: str, seed_predictions: list[dict[str, Any]] | None = None,
+                           backend: str = "project") -> str:
+    """Calculate PLUS FoM, land-class accuracy, and FoM stability across supplied random-seed rasters."""
+    return json_result(registry.call(backend, "analysis.plus_validation", {
+        "reference_raster": reference_raster, "predicted_raster": predicted_raster,
+        "baseline_raster": baseline_raster, "seed_predictions": seed_predictions or [], "output": output,
+    }))
+
+
+@mcp.tool()
+def validate_invest_consistency(workflow_raster: str, independent_raster: str, output: str,
+                                relative_tolerance: float = 0.001, backend: str = "project") -> str:
+    """Compare workflow and independently executed InVEST Carbon rasters on the same grid."""
+    return json_result(registry.call(backend, "analysis.invest_consistency", {
+        "workflow_raster": workflow_raster, "independent_raster": independent_raster,
+        "relative_tolerance": relative_tolerance, "output": output,
+    }))
 
 
 @mcp.tool()
@@ -278,6 +358,15 @@ def analyze_ecosystem_drivers(samples_table: str, target_field: str, factor_fiel
 
 
 @mcp.tool()
+def analyze_ecosystem_sensitivity(criteria_table: str, config: str, output: str,
+                                  relative_delta: float = 0.1, backend: str = "ecosystem") -> str:
+    """Perturb each Min-Max or AHP criterion weight and report score and rank sensitivity."""
+    return json_result(registry.call(backend, "ecosystem.sensitivity_analysis", {
+        "criteria_table": criteria_table, "config": config, "relative_delta": relative_delta, "output": output,
+    }))
+
+
+@mcp.tool()
 def get_job_status(backend: str, job_id: str) -> str:
     """Get status, progress, logs, errors, and outputs for an asynchronous software job."""
     return json_result(registry.call(backend, "system.job_status", {"job_id": job_id}))
@@ -302,6 +391,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     if args.transport == "streamable-http":
+        if not is_loopback_host(args.host):
+            raise SystemExit("streamable HTTP transport may bind only to localhost/127.0.0.1/::1")
         mcp.settings.host = args.host
         mcp.settings.port = args.port
     mcp.run(transport=args.transport)

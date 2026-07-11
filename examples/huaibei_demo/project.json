@@ -1,0 +1,88 @@
+{
+  "schema_version": 2,
+  "project_id": "huaibei-synthetic-demo",
+  "workspace": "runtime",
+  "inputs": {
+    "imagery": ["data/imagery_2025.tif"],
+    "roi": "data/roi.geojson",
+    "mine_boundary": "data/mine_boundary.geojson",
+    "carbon_density": "data/carbon_density.csv",
+    "historical_lulc": ["data/lulc_2020.tif", "data/lulc_2025.tif"],
+    "lulc_baseline": "data/lulc_2025.tif",
+    "training_roi": null,
+    "model_package": null,
+    "dem": "data/dem.tif",
+    "water_surface_elevation_m": null,
+    "subsidence_depth_raster": "data/subsidence_depth_m.tif",
+    "subsidence_w_dat": "data/external_w.dat",
+    "workface_boundary": "data/workface.geojson",
+    "subsidence_water_boundary": null,
+    "aquatic_vegetation_boundary": null,
+    "bottom_sediment_boundary": null,
+    "driver_factors": {
+      "dem": "data/dem.tif",
+      "slope": "data/slope.tif",
+      "road_distance": "data/road_distance.tif",
+      "mine_distance": "data/mine_distance.tif"
+    }
+  },
+  "classification": {
+    "enabled": false,
+    "engine": "provided_lulc",
+    "scheme": "high_water_coal_7class"
+  },
+  "plus": {
+    "enabled": true,
+    "baseline_year": 2025,
+    "target_year": 2030,
+    "scenarios": ["ND", "UD", "EP", "RE"],
+    "output_workspace": "plus",
+    "resource_extraction": {
+      "core_driver": "subsidence_depth",
+      "core_driver_input": "inputs.subsidence_depth_raster",
+      "core_driver_unit": "m",
+      "core_driver_convention": "positive_down",
+      "requires_master_grid_alignment": true,
+      "additional_driver_factors": ["dem", "slope", "road_distance", "mine_distance"],
+      "water_susceptibility": null,
+      "w_dat_preprocessing": {
+        "source_unit": "mm",
+        "source_convention": "negative_down",
+        "output_depth_unit": "m",
+        "output_depth_convention": "positive_down"
+      }
+    }
+  },
+  "invest": {
+    "enabled": true,
+    "lulc_source": "provided_lulc",
+    "output_workspace": "invest",
+    "datastack": null
+  },
+  "subsidence_water": {
+    "enabled": false,
+    "mode": "estimate_volume"
+  },
+  "ecosystem_service": {
+    "enabled": true,
+    "method": "ahp",
+    "criteria_table": "data/ecosystem_criteria.csv",
+    "config": "ecosystem_config.json",
+    "output_table": "ecosystem/service_scores.csv",
+    "service_models": {
+      "annual_water_yield_datastack": null,
+      "habitat_quality_datastack": null,
+      "water_yield_calibration_candidates": null
+    },
+    "analysis": {
+      "tradeoff_fields": ["carbon_storage_t_c", "annual_water_yield_m3", "habitat_quality"],
+      "scenario_field": "scenario",
+      "reference_scenario": "ND",
+      "geodetector_target_field": "ecosystem_service_score",
+      "geodetector_factor_fields": []
+    }
+  },
+  "gis_outputs": {
+    "enabled": false
+  }
+}

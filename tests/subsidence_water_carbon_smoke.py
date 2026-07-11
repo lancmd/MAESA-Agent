@@ -1,4 +1,4 @@
-"""Reproduce the thesis section 4.3 2023 component total from its published inputs."""
+"""Check the three-component subsidence-water carbon calculation with synthetic inputs."""
 
 import sys
 from pathlib import Path
@@ -11,14 +11,14 @@ from project_validator import validate  # noqa: E402
 
 
 components = calculate_components(
-    water_volume_m3=715100,
-    water_carbon_density_g_c_m3=26.25,
-    aquatic_vegetation_area_ha=44.57,
-    aquatic_vegetation_carbon_density_t_c_ha=0.46,
-    bottom_sediment_area_ha=51.28,
-    bottom_sediment_carbon_density_t_c_ha=62.42,
+    water_volume_m3=1000,
+    water_carbon_density_g_c_m3=10,
+    aquatic_vegetation_area_ha=2,
+    aquatic_vegetation_carbon_density_t_c_ha=5,
+    bottom_sediment_area_ha=3,
+    bottom_sediment_carbon_density_t_c_ha=20,
 )
-assert abs(components["subsidence_water_composite_carbon_t_c"] - 3240.17) < 0.01, components
+assert abs(components["subsidence_water_composite_carbon_t_c"] - 70.01) < 1e-9, components
 assert abs(calculate_invest_replacement(
     invest_total_carbon_t_c=1000,
     invest_subsidence_water_carbon_t_c=100,

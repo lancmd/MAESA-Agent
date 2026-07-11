@@ -1,0 +1,20 @@
+{
+  "environment": {"overwriteOutput": true},
+  "operations": [
+    {
+      "id": "compose_map",
+      "type": "compose_layout",
+      "aprx": "base.aprx",
+      "aprx_output": "outputs/composed.aprx",
+      "layout_name": "MainLayout",
+      "map_name": "MainMap",
+      "title_element_name": "Title",
+      "title_text": "Synthetic map",
+      "legend_name": "Legend",
+      "layers": [{"path": "lulc.tif", "name": "LULC", "visible": true}],
+      "png": "outputs/map.png",
+      "resolution": 300,
+      "validation_output": "validation/map.json"
+    }
+  ]
+}

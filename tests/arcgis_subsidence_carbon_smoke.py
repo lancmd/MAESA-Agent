@@ -1,4 +1,4 @@
-"""Assert the ArcGIS thesis-4.3 operation produces expected component carbon values."""
+"""Assert the ArcGIS composite-carbon operation produces expected component values."""
 
 import csv
 from pathlib import Path
