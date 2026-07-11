@@ -26,7 +26,7 @@
     "invest": {
       "transport": "command",
       "command": ["{python}", "{skill_root}/scripts/local_backend.py", "--backend", "invest"],
-      "capabilities": ["invest.run_carbon"]
+      "capabilities": ["invest.run_carbon", "invest.run_model"]
     },
     "pytorch": {
       "transport": "command",
@@ -41,7 +41,7 @@
     "ecosystem": {
       "transport": "command",
       "command": ["{python}", "{skill_root}/scripts/ecosystem_backend.py"],
-      "capabilities": ["ecosystem.evaluate"]
+      "capabilities": ["ecosystem.evaluate", "ecosystem.tradeoff_analysis", "ecosystem.scenario_compare", "ecosystem.water_yield_calibration", "ecosystem.geodetector_factor_analysis"]
     }
   }
 }

@@ -219,6 +219,13 @@ def validate(project_path: Path) -> dict[str, Any]:
             errors.append(f"ecosystem_service.method must be one of {sorted(VALID_ECOSYSTEM_METHODS)}")
         required_path("ecosystem criteria_table", ecosystem.get("criteria_table"), base, errors)
         required_path("ecosystem config", ecosystem.get("config"), base, errors)
+        service_models = ecosystem.get("service_models", {})
+        if service_models and not isinstance(service_models, dict):
+            errors.append("ecosystem_service.service_models must be an object")
+        elif isinstance(service_models, dict):
+            for key in ("annual_water_yield_datastack", "habitat_quality_datastack", "water_yield_calibration_candidates"):
+                if service_models.get(key):
+                    required_path(f"ecosystem service_models.{key}", service_models[key], base, errors)
 
     gis_outputs = project.get("gis_outputs", {})
     if gis_outputs.get("enabled"):

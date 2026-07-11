@@ -39,7 +39,7 @@ def capabilities(backend: str) -> dict[str, Any]:
         operations = ["system.capabilities", "dataset.inspect", "arcgis.run_operations"]
     elif backend == "invest":
         item = probe["invest"]
-        operations = ["system.capabilities", "invest.run_carbon"]
+        operations = ["system.capabilities", "invest.run_carbon", "invest.run_model"]
     else:
         item, operations = {"available": False, "path": None}, []
     return {"backend": backend, "available": item["available"], "operations": operations,
@@ -82,9 +82,13 @@ def handle_invest(envelope: dict[str, Any]) -> dict[str, Any]:
     executable = probe_software()["software"]["invest"]["path"]
     if not executable:
         return response(envelope, "failed", error="InVEST backend is unavailable")
+    operation = envelope.get("operation")
+    model = "carbon" if operation == "invest.run_carbon" else params.get("model")
+    if model not in {"carbon", "annual_water_yield", "habitat_quality"}:
+        return response(envelope, "failed", error="supported InVEST models are carbon, annual_water_yield, habitat_quality")
     workspace = Path(params["workspace"]).expanduser().resolve()
     workspace.mkdir(parents=True, exist_ok=True)
-    code, log = run([executable, "run", "carbon", "-l", "-d",
+    code, log = run([executable, "run", model, "-l", "-d",
                      str(Path(params["datastack"]).expanduser().resolve()), "-w", str(workspace)], workspace)
     log_path = workspace / f"mcp_{envelope['request_id']}.log"
     log_path.write_text(log, encoding="utf-8")

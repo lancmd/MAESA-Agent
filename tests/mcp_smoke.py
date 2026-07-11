@@ -27,7 +27,9 @@ async def run() -> None:
             expected = {
                 "list_backends", "backend_capabilities", "inspect_dataset", "validate_local_project", "run_gee_export",
                 "run_envi_classification", "run_arcgis_operations", "run_plus_scenario",
-                "run_invest_carbon", "validate_lulc_model", "run_pytorch_lulc", "evaluate_ecosystem_services",
+                "run_invest_carbon", "run_invest_ecosystem_model", "validate_lulc_model", "run_pytorch_lulc",
+                "evaluate_ecosystem_services", "analyze_ecosystem_tradeoffs", "compare_ecosystem_scenarios",
+                "calibrate_annual_water_yield", "analyze_ecosystem_drivers",
                 "get_job_status", "cancel_job", "list_job_outputs",
             }
             missing = expected - names
@@ -50,12 +52,42 @@ async def run() -> None:
                 raise AssertionError(f"local project validation failed: {project_validation}")
             ecosystem_result = await session.call_tool("evaluate_ecosystem_services", {
                 "criteria_table": str(ROOT / "tests" / "fixtures" / "ecosystem_criteria.csv"),
-                "config": str(ROOT / "templates" / "ecosystem_service_config.json"),
+                "config": str(ROOT / "tests" / "fixtures" / "ecosystem_service_config.json"),
                 "output": str(ROOT / "outputs" / "mcp_ecosystem_smoke.csv"),
             })
             ecosystem = json.loads(ecosystem_result.content[0].text)
             if ecosystem.get("status") != "completed":
                 raise AssertionError(f"ecosystem MCP evaluation failed: {ecosystem}")
+            tradeoff_result = await session.call_tool("analyze_ecosystem_tradeoffs", {
+                "criteria_table": str(ROOT / "tests" / "fixtures" / "ecosystem_criteria.csv"),
+                "fields": ["carbon_storage_t_c", "annual_water_yield_m3", "habitat_quality"],
+                "output": str(ROOT / "outputs" / "mcp_ecosystem_tradeoffs.csv"),
+            })
+            tradeoff = json.loads(tradeoff_result.content[0].text)
+            if tradeoff.get("status") != "completed":
+                raise AssertionError(f"ecosystem trade-off analysis failed: {tradeoff}")
+            comparison_result = await session.call_tool("compare_ecosystem_scenarios", {
+                "scores_table": str(ROOT / "outputs" / "mcp_ecosystem_smoke.csv"), "reference_scenario": "ND",
+                "output": str(ROOT / "outputs" / "mcp_ecosystem_scenarios.csv"),
+            })
+            comparison = json.loads(comparison_result.content[0].text)
+            if comparison.get("status") != "completed":
+                raise AssertionError(f"ecosystem scenario comparison failed: {comparison}")
+            calibration_result = await session.call_tool("calibrate_annual_water_yield", {
+                "candidates_table": str(ROOT / "tests" / "fixtures" / "water_yield_candidates.csv"),
+                "observed_volume_m3": 100, "output": str(ROOT / "outputs" / "mcp_water_yield_calibration.csv"),
+            })
+            calibration = json.loads(calibration_result.content[0].text)
+            if calibration.get("status") != "completed" or calibration["result"]["selected_parameter"] != "replace_b":
+                raise AssertionError(f"water-yield calibration failed: {calibration}")
+            detector_result = await session.call_tool("analyze_ecosystem_drivers", {
+                "samples_table": str(ROOT / "tests" / "fixtures" / "ecosystem_driver_samples.csv"),
+                "target_field": "ecosystem_service_score", "factor_fields": ["lulc_class", "slope_class"],
+                "output": str(ROOT / "outputs" / "mcp_ecosystem_geodetector.csv"),
+            })
+            detector = json.loads(detector_result.content[0].text)
+            if detector.get("status") != "completed":
+                raise AssertionError(f"ecosystem GeoDetector failed: {detector}")
             capability_result = await session.call_tool("backend_capabilities", {"backend": "arcgis"})
             capability = json.loads(capability_result.content[0].text)
             if capability.get("status") != "completed":

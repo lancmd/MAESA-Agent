@@ -92,7 +92,19 @@
     "method": "minmax",
     "criteria_table": "replace_with_ecosystem_criteria.csv",
     "config": "../templates/ecosystem_service_config.json",
-    "output_table": "outputs/ecosystem_service_scores.csv"
+    "output_table": "outputs/ecosystem_service_scores.csv",
+    "service_models": {
+      "annual_water_yield_datastack": null,
+      "habitat_quality_datastack": null,
+      "water_yield_calibration_candidates": null
+    },
+    "analysis": {
+      "tradeoff_fields": ["carbon_storage_t_c", "annual_water_yield_m3", "habitat_quality"],
+      "scenario_field": "scenario",
+      "reference_scenario": "ND",
+      "geodetector_target_field": "ecosystem_service_score",
+      "geodetector_factor_fields": []
+    }
   },
   "gis_outputs": {
     "enabled": true,

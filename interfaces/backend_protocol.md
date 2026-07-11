@@ -57,10 +57,15 @@
 | `arcgis.run_operations` | ArcGIS | `spec`, `workspace` |
 | `plus.run_scenario` | PLUS | `project`, `scenario` (`ND`/`UD`/`EP`/`RE`), `workspace`; `RE` additionally requires `parameters.resource_extraction` |
 | `invest.run_carbon` | InVEST | `datastack`, `workspace` |
+| `invest.run_model` | InVEST | `model` (`annual_water_yield` / `habitat_quality` / `carbon`), `datastack`, `workspace` |
 | `pytorch.validate_model` | PyTorch | `model_package` |
 | `pytorch.run_lulc_inference` | PyTorch | `model_package`, `input_raster`, `class_output`, `confidence_output` |
 | `project.validate` | Project validator | `project_file` |
 | `ecosystem.evaluate` | Local ecosystem evaluator | `criteria_table`, `config`, `output` |
+| `ecosystem.tradeoff_analysis` | Local ecosystem evaluator | `criteria_table`, `fields`, `output` |
+| `ecosystem.scenario_compare` | Local ecosystem evaluator | `scores_table`, `reference_scenario`, `output` |
+| `ecosystem.water_yield_calibration` | Local ecosystem evaluator | `candidates_table`, `observed_volume_m3`, `output` |
+| `ecosystem.geodetector_factor_analysis` | Local ecosystem evaluator | `samples_table`, `target_field`, `factor_fields`, `output` |
 
 后端可扩展操作，但必须在 `system.capabilities` 中返回名称、参数模式、软件版本和限制。
 

@@ -1,0 +1,5 @@
+ecosystem_service_score,lulc_class,slope_class,precipitation_class
+0.2,water,low,wet
+0.3,water,low,dry
+0.7,forest,high,wet
+0.8,forest,high,dry

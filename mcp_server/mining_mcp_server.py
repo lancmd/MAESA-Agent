@@ -210,6 +210,16 @@ def run_invest_carbon(datastack: str, workspace: str, backend: str = "invest") -
 
 
 @mcp.tool()
+def run_invest_ecosystem_model(model: str, datastack: str, workspace: str, backend: str = "invest") -> str:
+    """Run InVEST annual_water_yield, habitat_quality, or carbon using a user-prepared current-version datastack."""
+    if model not in {"annual_water_yield", "habitat_quality", "carbon"}:
+        return json_result({"status": "failed", "error": "model must be annual_water_yield, habitat_quality, or carbon"})
+    return json_result(registry.call(backend, "invest.run_model", {
+        "model": model, "datastack": datastack, "workspace": workspace
+    }))
+
+
+@mcp.tool()
 def validate_lulc_model(model_package: str, backend: str = "pytorch") -> str:
     """Validate a portable PyTorch LULC model package, class map, preprocessing contract, and weights hash."""
     return json_result(registry.call(backend, "pytorch.validate_model", {"model_package": model_package}))
@@ -228,9 +238,50 @@ def run_pytorch_lulc(model_package: str, input_raster: str, class_output: str,
 @mcp.tool()
 def evaluate_ecosystem_services(criteria_table: str, config: str, output: str,
                                 backend: str = "ecosystem") -> str:
-    """Evaluate ecosystem services with configured Min-Max or AHP weights and write a score table."""
+    """Fuse carbon, annual water yield, habitat quality, or other user-supplied services with Min-Max or AHP."""
     return json_result(registry.call(backend, "ecosystem.evaluate", {
         "criteria_table": criteria_table, "config": config, "output": output
+    }))
+
+
+@mcp.tool()
+def analyze_ecosystem_tradeoffs(criteria_table: str, fields: list[str], output: str,
+                                backend: str = "ecosystem") -> str:
+    """Calculate pairwise Spearman synergy/trade-off relationships without inferring statistical significance."""
+    return json_result(registry.call(backend, "ecosystem.tradeoff_analysis", {
+        "criteria_table": criteria_table, "fields": fields, "output": output
+    }))
+
+
+@mcp.tool()
+def compare_ecosystem_scenarios(scores_table: str, reference_scenario: str, output: str,
+                                scenario_field: str = "scenario", value_fields: list[str] | None = None,
+                                backend: str = "ecosystem") -> str:
+    """Compare normalized ecosystem-service scores across ND, UD, EP, RE, or user-defined scenarios."""
+    return json_result(registry.call(backend, "ecosystem.scenario_compare", {
+        "scores_table": scores_table, "reference_scenario": reference_scenario, "scenario_field": scenario_field,
+        "value_fields": value_fields or ["ecosystem_service_score"], "output": output
+    }))
+
+
+@mcp.tool()
+def calibrate_annual_water_yield(candidates_table: str, observed_volume_m3: float, output: str,
+                                 parameter_field: str = "seasonality_constant_z",
+                                 modeled_volume_field: str = "modeled_water_yield_m3",
+                                 backend: str = "ecosystem") -> str:
+    """Select the InVEST annual-water-yield parameter candidate with the smallest compatible-volume error."""
+    return json_result(registry.call(backend, "ecosystem.water_yield_calibration", {
+        "candidates_table": candidates_table, "observed_volume_m3": observed_volume_m3,
+        "parameter_field": parameter_field, "modeled_volume_field": modeled_volume_field, "output": output
+    }))
+
+
+@mcp.tool()
+def analyze_ecosystem_drivers(samples_table: str, target_field: str, factor_fields: list[str], output: str,
+                              backend: str = "ecosystem") -> str:
+    """Run GeoDetector q and interaction analysis on pre-classified factor strata and service-score samples."""
+    return json_result(registry.call(backend, "ecosystem.geodetector_factor_analysis", {
+        "samples_table": samples_table, "target_field": target_field, "factor_fields": factor_fields, "output": output
     }))
 
 
