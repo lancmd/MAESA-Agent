@@ -1,6 +1,6 @@
 # 矿区 GIS 后端协议 v1
 
-本协议把智能体工具与具体软件解耦。MCP 服务只发送结构化任务；ArcGIS、ENVI、PLUS、GEE、InVEST 或开放 GIS 后端分别实现桥接器。软件可位于本机、局域网服务器、云端容器或桌面插件中，不要求与智能体安装在同一路径。
+本协议把智能体工具与具体软件解耦。MCP 服务只发送结构化任务；ArcGIS、ENVI、PLUS、InVEST、PyTorch 或开放 GIS 后端分别实现桥接器。软件可位于本机、局域网服务器、云端容器或桌面插件中，不要求与智能体安装在同一路径。
 
 ## 请求
 
@@ -52,7 +52,6 @@
 | `system.cancel_job` | 所有 | `job_id` |
 | `system.list_outputs` | 所有 | `job_id` |
 | `dataset.inspect` | 任意 GIS | `path` |
-| `gee.export_imagery` | GEE | `template`, `variables`, `destination` |
 | `envi.supervised_classification` | ENVI | `input_raster`, `training_vector`, `output_raster`, `method` |
 | `arcgis.run_operations` | ArcGIS | `spec`, `workspace` |
 | `plus.run_scenario` | PLUS | `project`, `scenario` (`ND`/`UD`/`EP`/`RE`), `workspace`; `RE` additionally requires `parameters.resource_extraction` |
@@ -87,7 +86,7 @@
 
 `subsidence_depth_raster` 是由外部概率积分法软件输出的 `w.dat`/`w.txt` 或等价结果，经单位、符号、地理参考核验、栅格化并对齐 PLUS 主网格后的连续数值栅格。它是 RE 的核心驱动因子，但不替代 DEM、地形、区位、社会经济、工作面或开采规划等其他因素。原始 `w.dat`、彩色沉陷云图和等值线图不能直接传给 PLUS；本项目也不计算概率积分法下沉值。
 
-软件插件可直接实现 socket 协议，也可用 `scripts/bridge_server.py --handler package.module:handle --port <端口>` 暴露一个 Python `handle(request) -> response` 函数。GEE/PLUS 的服务化后端通常使用 HTTP；QGIS、ArcGIS、ENVI 等桌面进程通常使用 socket 或软件插件；容器与命令行工具可使用 command transport。
+软件插件可直接实现 socket 协议，也可用 `scripts/bridge_server.py --handler package.module:handle --port <端口>` 暴露一个 Python `handle(request) -> response` 函数。PLUS 等服务化后端通常使用 HTTP；QGIS、ArcGIS、ENVI 等桌面进程通常使用 socket 或软件插件；容器与命令行工具可使用 command transport。
 
 ## 安全与复现
 

@@ -5,20 +5,6 @@
   "software": {},
   "stages": [
     {
-      "id": "gee_landsat_input",
-      "adapter": "gee",
-      "enabled": false,
-      "template": "../gee_codes/landsat_lulc_input.js",
-      "output": "generated/landsat_lulc_input.js",
-      "variables": {
-        "roiAsset": "users/replace/me",
-        "year": 2020
-      },
-      "inputs": [],
-      "outputs": ["generated/landsat_lulc_input.js"],
-      "depends_on": []
-    },
-    {
       "id": "arcgis_preprocess",
       "adapter": "arcgis",
       "enabled": false,

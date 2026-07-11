@@ -1,12 +1,12 @@
 interface:
-  display_name: "矿区生态流程执行智能体"
-  short_description: "跨 GEE、PyTorch、GIS、PLUS 和 InVEST 执行矿区空间分析"
-  default_prompt: "Use $national-mining-lulc-carbon-skill to inspect my mining-area data, select available software adapters, execute the requested workflow, validate outputs, and return the generated artifacts."
+  display_name: "Mining Area Ecological Workflow"
+  short_description: "Execute local mining-area GIS workflows"
+  default_prompt: "Use $mining-area-ecological-space-analysis to inspect local mining-area data, select available adapters, execute the workflow, validate outputs, and return artifacts."
 dependencies:
   tools:
     - type: "mcp"
       value: "mining-gis"
-      description: "跨 GEE、ArcGIS、ENVI、PLUS 与 InVEST 的矿区 GIS 执行服务"
+      description: "Local ArcGIS, ENVI, PyTorch, PLUS, and InVEST execution service"
       transport: "streamable_http"
       url: "http://127.0.0.1:8765/mcp"
 policy:

@@ -133,7 +133,7 @@ PLUS 模型一般需要将道路、铁路、河流等矢量数据转换为欧氏
 
 - ArcGIS Pro：投影栅格、重采样、按掩膜提取；
 - ENVI：Resize Data、Layer Stacking；
-- GEE：reproject、resample、clip。
+- GDAL/QGIS：重投影、重采样、裁剪和格式转换。
 
 ## 8. 开放目录发现与版本固定
 

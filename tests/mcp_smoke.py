@@ -25,7 +25,7 @@ async def run() -> None:
             tools = await session.list_tools()
             names = {tool.name for tool in tools.tools}
             expected = {
-                "list_backends", "backend_capabilities", "inspect_dataset", "validate_local_project", "run_gee_export",
+                "list_backends", "backend_capabilities", "inspect_dataset", "validate_local_project",
                 "run_envi_classification", "run_arcgis_operations", "run_plus_scenario",
                 "run_invest_carbon", "run_invest_ecosystem_model", "validate_lulc_model", "run_pytorch_lulc",
                 "evaluate_ecosystem_services", "analyze_ecosystem_tradeoffs", "compare_ecosystem_scenarios",
@@ -37,7 +37,7 @@ async def run() -> None:
                 raise AssertionError(f"missing MCP tools: {sorted(missing)}")
             result = await session.call_tool("list_backends", {})
             payload = json.loads(result.content[0].text)
-            if not {"gee", "envi", "plus", "arcgis", "invest", "pytorch", "project", "ecosystem"}.issubset(payload["backends"]):
+            if not {"envi", "plus", "arcgis", "invest", "pytorch", "project", "ecosystem"}.issubset(payload["backends"]):
                 raise AssertionError("backend registry is incomplete")
             invalid_re = await session.call_tool("run_plus_scenario", {
                 "project": "example", "scenario": "RE", "workspace": str(ROOT / "outputs"), "parameters": {}

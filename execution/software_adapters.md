@@ -20,10 +20,6 @@ ENVI 桥接器在有许可的 ENVI 进程或服务器中实现 `envi.supervised_
 
 PyTorch 后端实现 `pytorch.validate_model` 与 `pytorch.run_lulc_inference`。模型以带哈希、类别、波段、归一化和 patch 参数的目录上传，优先使用 `.pt2` ExportedProgram。推理采用重叠分块融合，输出分类与置信度 GeoTIFF；跨区域应用默认标记 `pending_validation`。详细规范见 `deep_learning/pytorch_workflow.md`。
 
-## Google Earth Engine
-
-GEE 后端可使用 Earth Engine Python/REST API、服务账号、已认证用户会话或任务队列实现 `gee.export_imagery`。后端负责返回任务 ID并跟踪导出；本地渲染 `gee_codes/*.js` 只是无认证时的兜底。脚本生成不是影像导出完成。
-
 ## PLUS
 
 PLUS 不同发布版本的自动化入口不统一，因此由对应版本的桥接器实现 `plus.run_scenario` 并在能力响应中声明参数模式。桥接器可包装 GUI 插件、宏、进程控制或服务化版本；智能体不得猜测命令行参数。没有桥接器时只能完成输入对齐与任务包，状态标记为 `prepared`。

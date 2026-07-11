@@ -152,14 +152,6 @@ def validate_local_project(project_file: str, backend: str = "project") -> str:
 
 
 @mcp.tool()
-def run_gee_export(template: str, variables: dict[str, Any], destination: dict[str, Any], backend: str = "gee") -> str:
-    """Submit a parameterized Earth Engine imagery/index/export workflow and return its job id or completed outputs."""
-    return json_result(registry.call(backend, "gee.export_imagery", {
-        "template": template, "variables": variables, "destination": destination
-    }))
-
-
-@mcp.tool()
 def run_envi_classification(input_raster: str, training_vector: str, output_raster: str,
                             method: str = "maximum_likelihood", backend: str = "envi") -> str:
     """Run ENVI supervised classification. Method is maximum_likelihood or minimum_distance."""

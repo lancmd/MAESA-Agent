@@ -7,7 +7,6 @@ import argparse
 import datetime as dt
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -64,10 +63,6 @@ def probe_software(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
             r"C:\ruanjian\envi5.6\ENVI56\IDL88\bin\bin.x86_64\idl.exe",
         ],
         "plus": [overrides.get("plus"), os.getenv("PLUS_EXE")],
-        "earthengine": [
-            overrides.get("earthengine"), os.getenv("EARTHENGINE_CLI"),
-            shutil.which("earthengine"),
-        ],
         "gdalinfo": [
             overrides.get("gdalinfo"), os.getenv("GDALINFO"), shutil.which("gdalinfo"),
         ],
@@ -162,23 +157,6 @@ class JobRunner:
             raise RuntimeError(f"command returned {process.returncode}; see {log_path}")
         return {"status": "completed", "command": args, "returncode": process.returncode,
                 "log": f"logs/{stage_id}.log"}
-
-    def run_gee(self, stage: dict[str, Any]) -> dict[str, Any]:
-        template = self.stage_path(stage["template"])
-        output = self.stage_path(stage["output"])
-        text = template.read_text(encoding="utf-8-sig")
-        for name, value in stage.get("variables", {}).items():
-            replacement = f"var {name} = {json.dumps(value, ensure_ascii=False)};"
-            text, count = re.subn(rf"(?m)^\s*var\s+{re.escape(name)}\s*=.*?;\s*$", replacement, text, count=1)
-            if count != 1:
-                raise ValueError(f"GEE variable not found exactly once: {name}")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(text, encoding="utf-8")
-        if stage.get("execute_command"):
-            args = [str(item).replace("{script}", str(output)) for item in stage["execute_command"]]
-            return self.command(stage["id"], args)
-        return {"status": "prepared", "artifact": stage["output"],
-                "reason": "script generated; authenticated GEE execution was not configured"}
 
     def run_arcgis(self, stage: dict[str, Any]) -> dict[str, Any]:
         propy = self.probe["software"]["arcgis_propy"]["path"]
