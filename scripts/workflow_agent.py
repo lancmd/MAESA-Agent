@@ -191,6 +191,12 @@ class JobRunner:
             except (OSError, PathSafetyError, TypeError) as error:
                 errors.append(f"invalid output {value}: {error}")
         adapter = stage.get("adapter")
+        timeout = stage.get("timeout_seconds")
+        if timeout is not None and (not isinstance(timeout, (int, float)) or timeout <= 0):
+            errors.append("timeout_seconds must be a positive number when supplied")
+        retries = stage.get("retries", 0)
+        if not isinstance(retries, int) or not 0 <= retries <= 5:
+            errors.append("retries must be an integer from 0 to 5")
         required = {"arcgis": "arcgis_propy", "invest": "invest", "envi": "idl"}.get(adapter)
         if required and not self.probe["software"][required]["available"]:
             errors.append(f"software unavailable: {required}")
@@ -209,18 +215,27 @@ class JobRunner:
         return {"project_id": self.job.get("project_id"), "workspace": str(self.workspace),
                 "software": self.probe["software"], "stages": stages}
 
-    def command(self, stage_id: str, args: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
+    def command(self, stage_id: str, args: list[str], env: dict[str, str] | None = None,
+                timeout_seconds: float | None = None, retries: int = 0) -> dict[str, Any]:
         log_path = self.workspace / "logs" / f"{stage_id}.log"
         if self.dry_run:
             return {"status": "prepared", "command": args, "log": f"logs/{stage_id}.log", "dry_run": True}
-        process = subprocess.run(args, cwd=self.workspace, env=env, text=True,
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                 encoding="utf-8", errors="replace", check=False)
-        log_path.write_text(process.stdout or "", encoding="utf-8")
-        if process.returncode:
-            raise RuntimeError(f"command returned {process.returncode}; see {log_path}")
-        return {"status": "completed", "command": args, "returncode": process.returncode,
-                "log": f"logs/{stage_id}.log"}
+        timeout = float(timeout_seconds) if timeout_seconds is not None else 3600.0
+        attempts: list[str] = []
+        for attempt in range(retries + 1):
+            try:
+                process = subprocess.run(args, cwd=self.workspace, env=env, text=True,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         encoding="utf-8", errors="replace", timeout=timeout, check=False)
+                attempts.append(f"attempt {attempt + 1}: returncode={process.returncode}\n{process.stdout or ''}")
+                if process.returncode == 0:
+                    log_path.write_text("\n\n".join(attempts), encoding="utf-8")
+                    return {"status": "completed", "command": args, "returncode": process.returncode,
+                            "attempts": attempt + 1, "timeout_seconds": timeout, "log": f"logs/{stage_id}.log"}
+            except subprocess.TimeoutExpired as error:
+                attempts.append(f"attempt {attempt + 1}: timeout after {timeout:g} seconds\n{error.stdout or ''}")
+        log_path.write_text("\n\n".join(attempts), encoding="utf-8")
+        raise RuntimeError(f"command failed after {retries + 1} attempt(s); see {log_path}")
 
     def run_arcgis(self, stage: dict[str, Any]) -> dict[str, Any]:
         propy = self.probe["software"]["arcgis_propy"]["path"]
@@ -228,7 +243,7 @@ class JobRunner:
         command = [propy, str(ROOT / "scripts" / "arcgis_ops.py"), "--spec", str(spec), "--workspace", str(self.workspace)]
         if self.confirm_overwrite:
             command.append("--confirm-overwrite")
-        return self.command(stage["id"], command)
+        return self.command(stage["id"], command, timeout_seconds=stage.get("timeout_seconds"), retries=stage.get("retries", 0))
 
     def run_invest(self, stage: dict[str, Any]) -> dict[str, Any]:
         executable = self.probe["software"]["invest"]["path"]
@@ -247,7 +262,7 @@ class JobRunner:
         model_workspace.mkdir(parents=True, exist_ok=True)
         args = [executable, "run", stage.get("model", "carbon"), "-l", "-d", str(datastack),
                 "-w", str(model_workspace)]
-        return self.command(stage["id"], args)
+        return self.command(stage["id"], args, timeout_seconds=stage.get("timeout_seconds"), retries=stage.get("retries", 0))
 
     def run_envi(self, stage: dict[str, Any]) -> dict[str, Any]:
         executable = self.probe["software"]["idl"]["path"]
@@ -256,7 +271,8 @@ class JobRunner:
         env = os.environ.copy()
         env.update({str(key): str(self.stage_path(value)) for key, value in stage.get("env", {}).items()})
         expression = f".run '{batch.as_posix()}' & {entrypoint} & exit"
-        return self.command(stage["id"], [executable, "-e", expression], env=env)
+        return self.command(stage["id"], [executable, "-e", expression], env=env,
+                            timeout_seconds=stage.get("timeout_seconds"), retries=stage.get("retries", 0))
 
     def run_plus(self, stage: dict[str, Any]) -> dict[str, Any]:
         if stage.get("request"):
@@ -267,10 +283,15 @@ class JobRunner:
             log_path = self.workspace / "logs" / f"{stage['id']}.log"
             if self.dry_run:
                 return {"status": "prepared", "request": envelope, "log": str(log_path), "dry_run": True}
-            process = subprocess.run([sys.executable, str(ROOT / "scripts" / "plus_backend.py")],
-                                     input=json.dumps(envelope, ensure_ascii=True), text=True,
-                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
-                                     errors="replace", check=False)
+            timeout = float(stage.get("timeout_seconds", 3600))
+            try:
+                process = subprocess.run([sys.executable, str(ROOT / "scripts" / "plus_backend.py")],
+                                         input=json.dumps(envelope, ensure_ascii=True), text=True,
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8",
+                                         errors="replace", timeout=timeout, check=False)
+            except subprocess.TimeoutExpired as error:
+                log_path.write_text(str(error), encoding="utf-8")
+                raise RuntimeError(f"local PLUS bridge timed out after {timeout:g} seconds; see {log_path}") from error
             log_path.write_text(process.stdout or "", encoding="utf-8")
             if process.returncode:
                 raise RuntimeError(f"local PLUS bridge returned {process.returncode}; see {log_path}")
@@ -283,7 +304,8 @@ class JobRunner:
         if stage.get("command_args"):
             if not executable:
                 raise RuntimeError("PLUS executable is unavailable")
-            return self.command(stage["id"], [executable, *map(str, stage["command_args"])])
+            return self.command(stage["id"], [executable, *map(str, stage["command_args"])],
+                                timeout_seconds=stage.get("timeout_seconds"), retries=stage.get("retries", 0))
         if stage.get("launch_gui") and executable:
             if self.dry_run:
                 return {"status": "prepared", "command": [executable], "dry_run": True}
@@ -292,7 +314,8 @@ class JobRunner:
         return {"status": "prepared", "reason": "inputs prepared; no verified PLUS automation entry supplied"}
 
     def run_command(self, stage: dict[str, Any]) -> dict[str, Any]:
-        return self.command(stage["id"], [str(item) for item in stage["command"]])
+        return self.command(stage["id"], [str(item) for item in stage["command"]],
+                            timeout_seconds=stage.get("timeout_seconds"), retries=stage.get("retries", 0))
 
     def run(self, selected_stage: str | None = None) -> int:
         failures = 0

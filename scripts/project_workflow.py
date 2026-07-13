@@ -113,7 +113,18 @@ def add_preflight(stages: list[dict[str, Any]], workspace: Path, inputs: dict[st
         datasets.append({"name": master, "path": baseline, "kind": "lulc", "allowed_codes": allowed_codes(scheme), "must_align": True})
     elif classification.get("enabled") and imagery:
         master = "imagery"
-        datasets.append({"name": master, "path": imagery[0], "kind": "continuous", "must_align": False})
+        image_spec: dict[str, Any] = {"name": master, "path": imagery[0], "kind": "continuous", "must_align": False}
+        if classification.get("engine") == "pytorch" and inputs.get("model_package"):
+            try:
+                model = read_json(Path(source_path(inputs["model_package"], base)) / "model_config.json")
+                model_input = model.get("input", {})
+                image_spec.update({"expected_band_count": len(model_input.get("band_indexes", [])),
+                                   "expected_band_names": model_input.get("bands"),
+                                   "expected_value_range": model_input.get("value_range"),
+                                   "sensor": model_input.get("sensor")})
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+        datasets.append(image_spec)
     if plus.get("enabled"):
         for name, value in inputs.get("driver_factors", {}).items():
             if value:
@@ -128,6 +139,10 @@ def add_preflight(stages: list[dict[str, Any]], workspace: Path, inputs: dict[st
             if value and not any(item["name"] == name for item in datasets):
                 datasets.append({"name": name, "path": source_path(value, base), "kind": kind, "must_align": bool(master),
                                  "require_projected_meters": kind in {"continuous", "subsidence_depth"}})
+    for name, value in (("mine_boundary", inputs.get("mine_boundary")), ("training_roi", inputs.get("training_roi")),
+                        ("subsidence_water_boundary", inputs.get("subsidence_water_boundary"))):
+        if value:
+            datasets.append({"name": name, "path": source_path(value, base), "kind": "vector", "require_crs": True})
     if not datasets:
         return None
     vertical_datum: dict[str, Any] = {}
@@ -187,7 +202,13 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
     lulc_dependency = dependencies.copy()
 
     if classification.get("enabled"):
-        lulc = output_path(classification.get("output_lulc", "outputs/lulc.tif"), workspace)
+        # A supplied LULC is an analysis input, not a classification output.
+        # Keeping its source path prevents the compiler from inventing an
+        # imagery dependency or trying to overwrite the user's raster.
+        if classification["engine"] == "provided_lulc":
+            lulc = source_path(inputs["lulc_baseline"], base)
+        else:
+            lulc = output_path(classification.get("output_lulc", "outputs/lulc.tif"), workspace)
         if classification["engine"] == "pytorch":
             confidence = output_path(classification.get("output_confidence", "outputs/lulc_confidence.tif"), workspace)
             low_confidence = output_path(classification["output_low_confidence"], workspace) if classification.get("output_low_confidence") else None
@@ -217,20 +238,26 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             master = source_path(inputs["imagery"][0], base)
             lulc_dependency = [lulc_validation_stage(stages, "lulc_output_validation", lulc, master,
                                                       classification["scheme"], carbon, workspace, [classify_id])]
-            accuracy = classification.get("accuracy", {})
-            if accuracy.get("enabled"):
-                acc_output = output_path(accuracy["output"], workspace)
-                matrix = output_path(accuracy["confusion_matrix"], workspace)
-                stages.append({"id": "lulc_accuracy", "adapter": "command", "enabled": True,
-                    "command": [sys.executable, str(ROOT / "scripts" / "lulc_accuracy.py"), "--samples",
-                                source_path(accuracy["validation_samples"], base), "--reference-field", accuracy["reference_field"],
-                                "--prediction-field", accuracy["prediction_field"], "--output", acc_output,
-                                "--confusion-matrix", matrix] + (["--classification-raster", lulc, "--x-field", accuracy["x_field"],
-                                "--y-field", accuracy["y_field"]] if accuracy.get("x_field") and accuracy.get("y_field") else []) +
-                               (["--samples-crs", accuracy["samples_crs"]] if accuracy.get("samples_crs") else []),
-                    "inputs": [source_path(accuracy["validation_samples"], base), lulc], "outputs": [acc_output, matrix],
-                    "depends_on": lulc_dependency.copy()})
-                lulc_dependency.append("lulc_accuracy")
+        else:
+            lulc_dependency = [lulc_validation_stage(stages, "lulc_output_validation", lulc, None,
+                                                      classification["scheme"], carbon, workspace, dependencies.copy())]
+        # Accuracy evaluation is meaningful for both newly classified and
+        # user-provided LULC rasters.  It remains conditional on independently
+        # supplied samples, rather than being silently skipped.
+        accuracy = classification.get("accuracy", {})
+        if accuracy.get("enabled"):
+            acc_output = output_path(accuracy["output"], workspace)
+            matrix = output_path(accuracy["confusion_matrix"], workspace)
+            stages.append({"id": "lulc_accuracy", "adapter": "command", "enabled": True,
+                "command": [sys.executable, str(ROOT / "scripts" / "lulc_accuracy.py"), "--samples",
+                            source_path(accuracy["validation_samples"], base), "--reference-field", accuracy["reference_field"],
+                            "--prediction-field", accuracy["prediction_field"], "--output", acc_output,
+                            "--confusion-matrix", matrix] + (["--classification-raster", lulc, "--x-field", accuracy["x_field"],
+                            "--y-field", accuracy["y_field"]] if accuracy.get("x_field") and accuracy.get("y_field") else []) +
+                           (["--samples-crs", accuracy["samples_crs"]] if accuracy.get("samples_crs") else []),
+                "inputs": [source_path(accuracy["validation_samples"], base), lulc], "outputs": [acc_output, matrix],
+                "depends_on": lulc_dependency.copy()})
+            lulc_dependency.append("lulc_accuracy")
 
     if subsidence.get("enabled") and subsidence.get("mode") in {"estimate_volume", "composite_subsidence_water_carbon"}:
         mode = subsidence["mode"]
@@ -330,7 +357,8 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                 stages.append({"id": stage_id, "adapter": "invest", "enabled": True, "model": INVEST_MODELS[model]["cli"],
                                "datastack": datastack, "model_workspace": str(model_workspace),
                                "inputs": [datastack, source_lulc] + ([carbon] if carbon else []),
-                               "outputs": outputs, "depends_on": dependency_by_scenario[scenario]})
+                               "outputs": outputs, "service_field": str(model_config.get("service_field", INVEST_MODELS[model]["service_field"])),
+                               "service_unit": model_config.get("service_unit"), "depends_on": dependency_by_scenario[scenario]})
                 invest_dependencies.append(stage_id)
                 if model == "carbon" and outputs:
                     invest_outputs[scenario] = outputs[0]
@@ -353,12 +381,20 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             grid_cell_pixels = ecosystem.get("analysis", {}).get("grid_cell_pixels")
             if grid_cell_pixels is not None:
                 command.extend(["--grid-cell-pixels", str(grid_cell_pixels)])
+                geometry = output_path(ecosystem.get("analysis", {}).get("grid_geometry_output", "outputs/ecosystem/scenario_units.geojson"), workspace)
+                command.extend(["--grid-geometry", geometry])
+            else:
+                geometry = None
             for scenario, service_outputs in invest_service_outputs.items():
                 for field, raster in service_outputs.items():
                     command.extend(["--service-raster", f"{scenario}={field}={raster}"])
+            for model, model_config in enabled_invest_models(invest).items():
+                field = str(model_config.get("service_field", INVEST_MODELS[model]["service_field"]))
+                if model_config.get("service_unit"):
+                    command.extend(["--service-unit", f"{field}={model_config['service_unit']}"])
             stages.append({"id": "ecosystem_scenario_inputs", "adapter": "command", "enabled": True, "command": command,
                            "inputs": list(invest_outputs.values()) + ([source_path(ecosystem["criteria_table"], base)] if ecosystem.get("criteria_table") else []),
-                           "outputs": [criteria, criteria + ".metadata.json"], "depends_on": invest_dependencies.copy()})
+                           "outputs": [item for item in [criteria, criteria + ".metadata.json", geometry] if item], "depends_on": invest_dependencies.copy()})
             ecosystem_dependencies = ["ecosystem_scenario_inputs"]
         else:
             ecosystem_dependencies = invest_dependencies.copy() or lulc_dependency.copy()
@@ -387,6 +423,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             stages.append({"id": "ecosystem_scenario_comparison", "adapter": "command", "enabled": True,
                 "command": [sys.executable, str(ROOT / "scripts" / "ecosystem_analysis.py"), "compare", "--table", score,
                             "--reference", analysis.get("reference_scenario", "ND"), "--scenario-field", analysis.get("scenario_field", "scenario"),
+                            "--id-field", analysis.get("id_field", read_json(Path(config)).get("id_field", "unit_id")),
                             "--fields", ",".join(fields), "--output", out], "inputs": [score], "outputs": [out],
                 "depends_on": ["ecosystem_service"]})
         geo_fields = analysis.get("geodetector_factor_fields", [])
@@ -429,6 +466,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
     if validation_config.get("enabled"):
         inferred_sections = [name for name, enabled in (("lulc", classification.get("enabled")), ("plus", plus.get("enabled")),
                              ("invest", invest.get("enabled")), ("ecosystem", ecosystem.get("enabled")),
+                             ("subsidence_water", subsidence.get("enabled")),
                              ("map", gis_outputs.get("enabled"))) if enabled]
         required_sections = validation_config.get("required_sections", inferred_sections)
         evidence = source_path(validation_config.get("evidence_file"), base)

@@ -113,11 +113,12 @@ def validate(project_path: Path) -> dict[str, Any]:
         if engine not in VALID_ENGINES:
             errors.append(f"classification.engine must be one of {sorted(VALID_ENGINES)}")
         imagery = inputs.get("imagery", [])
-        if not isinstance(imagery, list) or not imagery:
-            errors.append("classification requires inputs.imagery")
-        else:
-            for index, item in enumerate(imagery):
-                required_path(f"imagery[{index}]", item, base, input_roots, errors)
+        if engine != "provided_lulc":
+            if not isinstance(imagery, list) or not imagery:
+                errors.append("classification requires inputs.imagery for ENVI or PyTorch classification")
+            else:
+                for index, item in enumerate(imagery):
+                    required_path(f"imagery[{index}]", item, base, input_roots, errors)
         if engine == "envi":
             required_path("training_roi", inputs.get("training_roi"), base, input_roots, errors)
         elif engine == "pytorch":
@@ -216,6 +217,8 @@ def validate(project_path: Path) -> dict[str, Any]:
                 errors.append(f"invest.models.{name}.expected_outputs must be a list of non-empty paths")
             if name != "carbon" and (not isinstance(outputs, list) or not outputs):
                 errors.append(f"invest.models.{name}.expected_outputs is required to verify scenario outputs")
+            if plus.get("enabled") and ecosystem.get("enabled") and (not isinstance(config.get("service_unit"), str) or not config["service_unit"].strip()):
+                errors.append(f"invest.models.{name}.service_unit is required for scenario ecosystem-service aggregation")
         carbon_config = active_models.get("carbon", {}) if isinstance(active_models.get("carbon", {}), dict) else {}
         if carbon_config.get("enabled") and not (carbon_config.get("datastack_template") or carbon_config.get("provided_datastack")):
             carbon = required_path("carbon_density", inputs.get("carbon_density"), base, input_roots, errors)
@@ -303,7 +306,7 @@ def validate(project_path: Path) -> dict[str, Any]:
         if not validation.get("output_report"):
             errors.append("validation.output_report is required when validation is enabled")
         sections = validation.get("required_sections")
-        if sections is not None and (not isinstance(sections, list) or not sections or any(item not in {"lulc", "plus", "invest", "ecosystem", "map"} for item in sections)):
+        if sections is not None and (not isinstance(sections, list) or not sections or any(item not in {"lulc", "plus", "invest", "ecosystem", "subsidence_water", "map"} for item in sections)):
             errors.append("validation.required_sections must be a non-empty list of known sections")
 
     if not any(item.get("enabled") for item in (classification, plus, invest, subsidence, ecosystem, gis_outputs, validation)):

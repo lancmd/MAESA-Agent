@@ -42,6 +42,8 @@ def _rasterio_info(path: Path) -> dict[str, Any]:
             "is_projected": bool(src.crs and src.crs.is_projected),
             "linear_units": src.crs.linear_units if src.crs and src.crs.is_projected else None,
             "values": sorted(values) if len(values) <= 4096 else None,
+            "band_descriptions": [item or "" for item in src.descriptions],
+            "tags": {str(key).lower(): str(value) for key, value in src.tags().items()},
         }
 
 
@@ -64,6 +66,7 @@ def _gdal_info(path: Path) -> dict[str, Any]:
         "integer": any(token in data_type for token in ("int", "byte")),
         "minimum": band.get("minimum"), "maximum": band.get("maximum"), "nonfinite_count": None,
         "is_projected": bool(raw.get("coordinateSystem", {}).get("wkt")), "linear_units": None, "values": None,
+        "band_descriptions": [], "tags": raw.get("metadata", {}) if isinstance(raw.get("metadata"), dict) else {},
     }
 
 
@@ -72,6 +75,47 @@ def inspect_raster(path: Path) -> dict[str, Any]:
         return _rasterio_info(path)
     except ModuleNotFoundError:
         return _gdal_info(path)
+
+
+def _finite_coordinates(value: Any) -> bool:
+    if isinstance(value, (int, float)):
+        return math.isfinite(float(value))
+    if isinstance(value, list):
+        return bool(value) and all(_finite_coordinates(item) for item in value)
+    return False
+
+
+def inspect_vector(path: Path) -> dict[str, Any]:
+    """Inspect GeoJSON directly; use Fiona or ogrinfo for other local vector formats."""
+    if path.suffix.lower() in {".json", ".geojson"}:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        features = payload.get("features", []) if payload.get("type") == "FeatureCollection" else [payload]
+        geometries = [item.get("geometry", item) for item in features if isinstance(item, dict)]
+        types = sorted({str(item.get("type")) for item in geometries if isinstance(item, dict) and item.get("type")})
+        invalid = sum(1 for item in geometries if not isinstance(item, dict) or not _finite_coordinates(item.get("coordinates")))
+        crs = payload.get("crs", {})
+        name = crs.get("properties", {}).get("name") if isinstance(crs, dict) else None
+        return {"path": str(path.resolve()), "inspector": "geojson", "crs": name, "feature_count": len(features),
+                "geometry_types": types, "invalid_geometry_count": invalid}
+    try:
+        import fiona  # type: ignore
+        with fiona.open(path) as source:
+            types = sorted({str(item.get("geometry", {}).get("type")) for item in source if item.get("geometry")})
+            return {"path": str(path.resolve()), "inspector": "fiona", "crs": str(source.crs_wkt or source.crs) or None,
+                    "feature_count": len(source), "geometry_types": types, "invalid_geometry_count": None}
+    except ModuleNotFoundError:
+        executable = os.getenv("MINING_OGRINFO") or shutil.which("ogrinfo")
+        if not executable:
+            raise RuntimeError("no vector inspector is available; install Fiona or provide MINING_OGRINFO")
+        process = subprocess.run([executable, "-ro", "-so", "-al", "-json", str(path)], text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, encoding="utf-8", errors="replace", check=False)
+        if process.returncode:
+            raise RuntimeError(process.stderr.strip() or f"ogrinfo returned {process.returncode}")
+        payload = json.loads(process.stdout)
+        features = payload.get("features", [])
+        return {"path": str(path.resolve()), "inspector": "ogrinfo", "crs": None, "feature_count": len(features),
+                "geometry_types": sorted({str(item.get("geometry", {}).get("type")) for item in features if item.get("geometry")}),
+                "invalid_geometry_count": None}
 
 
 def _same_grid(master: dict[str, Any], item: dict[str, Any]) -> bool:
@@ -117,6 +161,7 @@ def validate(spec: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(datasets, list) or not datasets:
         raise ValueError("spatial preflight requires at least one dataset")
     inspected: dict[str, dict[str, Any]] = {}
+    warnings: list[str] = []
     for entry in datasets:
         name, raw = str(entry.get("name", "dataset")), entry.get("path")
         path = Path(str(raw)).expanduser().resolve()
@@ -124,6 +169,20 @@ def validate(spec: dict[str, Any]) -> dict[str, Any]:
             errors.append(f"{name}: file does not exist: {path}")
             continue
         try:
+            if entry.get("kind") == "vector":
+                info = inspect_vector(path)
+                inspected[name] = info
+                if entry.get("require_crs") and not info.get("crs"):
+                    errors.append(f"{name}: vector CRS is missing")
+                if not info.get("feature_count"):
+                    errors.append(f"{name}: vector contains no features")
+                if info.get("invalid_geometry_count"):
+                    errors.append(f"{name}: vector has invalid or non-finite geometries")
+                expected_types = set(entry.get("geometry_types", []))
+                if expected_types and not set(info.get("geometry_types", [])) <= expected_types:
+                    errors.append(f"{name}: vector geometry type is outside {sorted(expected_types)}")
+                checks.append(name)
+                continue
             info = inspect_raster(path)
             inspected[name] = info
             if not info.get("crs"):
@@ -150,6 +209,27 @@ def validate(spec: dict[str, Any]) -> dict[str, Any]:
             minimum_bands = entry.get("minimum_band_count")
             if minimum_bands is not None and (not isinstance(minimum_bands, int) or int(info.get("band_count") or 0) < minimum_bands):
                 errors.append(f"{name}: raster band count is below required minimum {minimum_bands}")
+            expected_bands = entry.get("expected_band_count")
+            if expected_bands is not None and (not isinstance(expected_bands, int) or int(info.get("band_count") or 0) != expected_bands):
+                errors.append(f"{name}: raster band count differs from model contract {expected_bands}")
+            expected_names = entry.get("expected_band_names")
+            descriptions = [value.lower() for value in info.get("band_descriptions", []) if value]
+            if expected_names and descriptions and [str(value).lower() for value in expected_names] != descriptions:
+                errors.append(f"{name}: raster band descriptions differ from the model contract")
+            expected_range = entry.get("expected_value_range")
+            if expected_range is not None:
+                if (not isinstance(expected_range, list) or len(expected_range) != 2 or
+                        not all(isinstance(value, (int, float)) and math.isfinite(float(value)) for value in expected_range) or
+                        float(expected_range[0]) >= float(expected_range[1])):
+                    errors.append(f"{name}: expected_value_range must be [minimum, maximum]")
+                elif info.get("minimum") is not None and (float(info["minimum"]) < float(expected_range[0]) or float(info["maximum"]) > float(expected_range[1])):
+                    errors.append(f"{name}: raster values fall outside the model value range")
+            expected_sensor = entry.get("sensor")
+            actual_sensor = (info.get("tags") or {}).get("sensor") or (info.get("tags") or {}).get("platform")
+            if expected_sensor and actual_sensor and str(expected_sensor).lower() != str(actual_sensor).lower():
+                errors.append(f"{name}: raster sensor tag differs from model contract {expected_sensor}")
+            elif expected_sensor and not actual_sensor:
+                warnings.append(f"{name}: model expects sensor {expected_sensor}, but the raster carries no sensor tag")
             if entry.get("kind") == "subsidence_depth":
                 minimum = info.get("minimum")
                 if minimum is None:
@@ -191,7 +271,7 @@ def validate(spec: dict[str, Any]) -> dict[str, Any]:
             errors.append("DEM and water level use different vertical datums")
         else:
             checks.append("vertical datum")
-    return {"status": "failed" if errors else "completed", "checks": checks, "errors": errors,
+    return {"status": "failed" if errors else "completed", "checks": checks, "warnings": warnings, "errors": errors,
             "datasets": inspected, "master": master_name}
 
 

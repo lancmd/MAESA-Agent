@@ -274,10 +274,10 @@ def tradeoff_analysis(criteria_table: Path, fields: list[str], output_path: Path
 
 
 def scenario_compare(scores_table: Path, scenario_field: str, reference_scenario: str,
-                     value_fields: list[str], output_path: Path) -> dict[str, Any]:
+                     value_fields: list[str], output_path: Path, id_field: str | None = None) -> dict[str, Any]:
     if not value_fields:
         raise ValueError("scenario comparison requires one or more value_fields")
-    rows = _rows_and_fields(scores_table, [scenario_field, *value_fields])
+    rows = _rows_and_fields(scores_table, [scenario_field, *([id_field] if id_field else []), *value_fields])
     grouped: dict[str, list[dict[str, str]]] = {}
     for row in rows:
         grouped.setdefault(row[scenario_field], []).append(row)
@@ -285,18 +285,43 @@ def scenario_compare(scores_table: Path, scenario_field: str, reference_scenario
         raise ValueError(f"reference scenario is absent: {reference_scenario}")
     means = {scenario: {field: sum(_numeric_column(group, field)) / len(group) for field in value_fields}
              for scenario, group in grouped.items()}
+    reference_by_id: dict[str, dict[str, str]] = {}
+    if id_field:
+        for row in grouped[reference_scenario]:
+            unit_id = row[id_field]
+            if not unit_id or unit_id in reference_by_id:
+                raise ValueError(f"{id_field} must be non-empty and unique within reference scenario")
+            reference_by_id[unit_id] = row
     output_rows = []
     for scenario in sorted(grouped):
         row: dict[str, Any] = {scenario_field: scenario, "unit_count": len(grouped[scenario])}
+        paired = []
+        if id_field:
+            seen: set[str] = set()
+            for item in grouped[scenario]:
+                unit_id = item[id_field]
+                if not unit_id or unit_id in seen:
+                    raise ValueError(f"{id_field} must be non-empty and unique within scenario {scenario}")
+                seen.add(unit_id)
+                if unit_id in reference_by_id:
+                    paired.append((item, reference_by_id[unit_id]))
+            row["paired_unit_count"] = len(paired)
+            row["unpaired_unit_count"] = len(grouped[scenario]) - len(paired)
+            if scenario != reference_scenario and not paired:
+                raise ValueError(f"no paired {id_field} values exist for scenario {scenario}")
         for field in value_fields:
             row[f"mean_{field}"] = means[scenario][field]
             row[f"delta_{field}_vs_{reference_scenario}"] = means[scenario][field] - means[reference_scenario][field]
+            if id_field:
+                deltas = [float(item[field]) - float(reference[field]) for item, reference in paired]
+                row[f"paired_mean_delta_{field}_vs_{reference_scenario}"] = sum(deltas) / len(deltas) if deltas else 0.0
         output_rows.append(row)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(output_rows[0])); writer.writeheader(); writer.writerows(output_rows)
-    return {"reference_scenario": reference_scenario, "scenario_field": scenario_field,
-            "value_fields": value_fields, "output": str(output_path.resolve())}
+    return {"reference_scenario": reference_scenario, "scenario_field": scenario_field, "id_field": id_field,
+            "comparison": "paired" if id_field else "unpaired_group_mean", "value_fields": value_fields,
+            "output": str(output_path.resolve())}
 
 
 def calibrate_water_yield(candidates_table: Path, parameter_field: str, modeled_volume_field: str,

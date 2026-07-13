@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -74,15 +76,19 @@ def write_records(workspace: Path, job: dict[str, Any], state: dict[str, Any], s
             path = Path(str(raw)).expanduser().resolve()
             declared[str(path)] = stage_id
     artifacts = [file_record(Path(path), stage) for path, stage in sorted(declared.items())]
-    manifest = {"schema_version": 1, "project_id": job.get("project_id"), "workspace": str(workspace),
-                "artifacts": artifacts}
+    manifest = {"schema_version": 2, "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+                "project_id": job.get("project_id"), "workspace": str(workspace), "artifacts": artifacts}
     manifest_path = workspace / "outputs_manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     provenance = {
-        "schema_version": 1, "project_id": job.get("project_id"), "job_sha256": sha256(Path(job["_path"])) if job.get("_path") else None,
+        "schema_version": 2, "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "project_id": job.get("project_id"), "job_sha256": sha256(Path(job["_path"])) if job.get("_path") else None,
         "inputs": _input_records(job), "software": software, "stages": state.get("stages", {}),
+        "runtime": {"python": platform.python_version(), "platform": platform.platform()},
+        "execution": {"created_at": state.get("created_at"), "updated_at": state.get("updated_at")},
         "parameters": [{"id": item.get("id"), "request": item.get("request"), "command": item.get("command"),
-                        "random_seed": item.get("random_seed")} for item in job.get("stages", [])],
+                        "random_seed": item.get("random_seed"), "timeout_seconds": item.get("timeout_seconds"),
+                        "retries": item.get("retries"), "service_unit": item.get("service_unit")} for item in job.get("stages", [])],
     }
     provenance_path = workspace / "provenance.json"
     provenance_path.write_text(json.dumps(provenance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

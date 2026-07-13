@@ -38,7 +38,8 @@ with tempfile.TemporaryDirectory() as temporary:
         elif isinstance(value, list):
             project["inputs"][key] = [str((fixture / item).resolve()) for item in value]
     project["inputs"]["driver_factors"] = {key: str((fixture / value).resolve()) for key, value in project["inputs"]["driver_factors"].items()}
-    project["invest"] = {"enabled": True, "output_workspace": "outputs/invest", "datastack": None}
+    project["invest"] = {"enabled": True, "output_workspace": "outputs/invest", "models": {
+        "carbon": {"enabled": True, "service_unit": "Mg C"}}}
     project["ecosystem_service"] = {"enabled": True, "method": "minmax", "criteria_table": str(supplemental), "config": str(config),
         "output_table": "outputs/ecosystem/scores.csv", "analysis": {"tradeoff_fields": ["carbon_storage_t_c", "annual_water_yield_m3"],
         "reference_scenario": "ND", "scenario_field": "scenario", "scenario_value_fields": ["ecosystem_service_score"], "sensitivity_enabled": True,

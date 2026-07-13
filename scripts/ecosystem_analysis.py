@@ -21,6 +21,7 @@ def main() -> int:
     compare = sub.add_parser("compare")
     compare.add_argument("--table", required=True, type=Path); compare.add_argument("--reference", required=True)
     compare.add_argument("--scenario-field", default="scenario"); compare.add_argument("--fields", required=True)
+    compare.add_argument("--id-field")
     compare.add_argument("--output", required=True, type=Path)
     sensitivity = sub.add_parser("sensitivity")
     sensitivity.add_argument("--table", required=True, type=Path); sensitivity.add_argument("--config", required=True, type=Path)
@@ -34,7 +35,7 @@ def main() -> int:
                                    args.permutations, args.bootstrap, args.seed)
     elif args.action == "compare":
         report = scenario_compare(args.table, args.scenario_field, args.reference,
-                                  [value for value in args.fields.split(",") if value], args.output)
+                                  [value for value in args.fields.split(",") if value], args.output, args.id_field)
     elif args.action == "sensitivity":
         report = sensitivity_analysis(args.table, args.config, args.relative_delta, args.output)
     else:

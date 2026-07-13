@@ -12,7 +12,7 @@ from typing import Any
 
 
 METRICS = ("oa", "precision", "recall", "f1", "iou")
-KNOWN_SECTIONS = ("lulc", "plus", "invest", "ecosystem", "map")
+KNOWN_SECTIONS = ("lulc", "plus", "invest", "ecosystem", "subsidence_water", "map")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -34,7 +34,9 @@ def section(status: str, checks: list[str], errors: list[str]) -> dict[str, Any]
 
 
 def validate_lulc(source: dict[str, Any]) -> dict[str, Any]:
-    metrics = source.get("metrics")
+    # lulc_accuracy.py writes its metrics at the document root.  Accept that
+    # native report as well as the compact evidence wrapper.
+    metrics = source.get("metrics") if isinstance(source.get("metrics"), dict) else source
     if not isinstance(metrics, dict):
         return section("pending_validation", [], ["independent classification metrics are absent"])
     errors: list[str] = []
@@ -93,11 +95,12 @@ def validate_plus(source: dict[str, Any]) -> dict[str, Any]:
 def validate_invest(source: dict[str, Any]) -> dict[str, Any]:
     if not source:
         return section("pending_validation", [], ["independent InVEST comparison is absent"])
-    reported = source.get("workflow_total_t_c")
-    independent = source.get("independent_total_t_c")
+    carbon = source.get("carbon") if isinstance(source.get("carbon"), dict) else source
+    reported = carbon.get("workflow_total_t_c")
+    independent = carbon.get("independent_total_t_c")
     if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in (reported, independent)):
         return section("pending_validation", [], ["workflow and independent InVEST totals are required"])
-    tolerance = source.get("relative_tolerance", 0.001)
+    tolerance = carbon.get("relative_tolerance", 0.001)
     if not isinstance(tolerance, (int, float)) or tolerance < 0:
         return section("failed", [], ["relative_tolerance must be non-negative"])
     denominator = max(abs(float(independent)), 1e-12)
@@ -105,7 +108,29 @@ def validate_invest(source: dict[str, Any]) -> dict[str, Any]:
     errors = [] if relative_difference <= float(tolerance) else [
         f"relative carbon difference {relative_difference:.6g} exceeds tolerance {float(tolerance):.6g}"
     ]
-    return section("failed" if errors else "completed", [f"relative difference={relative_difference:.6g}"], errors)
+    checks = [f"carbon relative difference={relative_difference:.6g}"]
+    models = source.get("models")
+    if models is not None:
+        if not isinstance(models, dict):
+            errors.append("InVEST models evidence must be an object")
+        else:
+            for name, model in models.items():
+                if name == "carbon":
+                    continue
+                if not isinstance(model, dict) or model.get("status") != "completed":
+                    errors.append(f"InVEST {name} output validation is incomplete")
+                    continue
+                outputs = model.get("outputs")
+                units = model.get("units")
+                if not isinstance(outputs, list) or not outputs or not all(isinstance(item, str) and item for item in outputs):
+                    errors.append(f"InVEST {name} requires one or more declared output files")
+                if (not isinstance(units, dict) or not units or
+                        any(not isinstance(value, str) or not value.strip() or value.strip().lower() == "undeclared"
+                            for value in units.values())):
+                    errors.append(f"InVEST {name} requires declared output units")
+                else:
+                    checks.append(f"{name} output contract")
+    return section("failed" if errors else "completed", checks, errors)
 
 
 def validate_ecosystem(source: dict[str, Any]) -> dict[str, Any]:
@@ -130,11 +155,22 @@ def validate_ecosystem(source: dict[str, Any]) -> dict[str, Any]:
         else:
             checks.append("AHP consistency ratio")
     sensitivity = source.get("sensitivity")
-    if not isinstance(sensitivity, dict) or not sensitivity:
+    if not isinstance(sensitivity, dict) or sensitivity.get("available") is not True:
         errors.append("sensitivity analysis summary is required")
+    elif not isinstance(sensitivity.get("maximum_rank_shift"), (int, float)) or sensitivity["maximum_rank_shift"] < 0:
+        errors.append("sensitivity maximum_rank_shift must be a finite non-negative number")
     else:
         checks.append("sensitivity analysis")
     return section("failed" if errors else "completed", checks, errors)
+
+
+def validate_subsidence_water(source: dict[str, Any]) -> dict[str, Any]:
+    if not source:
+        return section("pending_validation", [], ["subsidence-water validation evidence is absent"])
+    required = ("water_volume_m3", "subsidence_water_composite_carbon_t_c")
+    errors = [f"{field} must be a finite non-negative number" for field in required
+              if not isinstance(source.get(field), (int, float)) or not math.isfinite(float(source[field])) or float(source[field]) < 0]
+    return section("failed" if errors else "completed", ["volume and composite-carbon balance"], errors)
 
 
 def validate_map(source: dict[str, Any]) -> dict[str, Any]:
@@ -174,7 +210,7 @@ def validate_results(validation_file: Path, output_report: Path | None = None) -
     reports = payload.get("reports")
     if not isinstance(reports, dict):
         raise ValueError("analysis validation reports must be an object")
-    required_sections = payload.get("required_sections", list(KNOWN_SECTIONS))
+    required_sections = payload.get("required_sections", [name for name in KNOWN_SECTIONS if name in reports])
     if not isinstance(required_sections, list) or not required_sections or any(item not in KNOWN_SECTIONS for item in required_sections):
         raise ValueError("required_sections must be a non-empty subset of " + ", ".join(KNOWN_SECTIONS))
     all_sections = {
@@ -182,6 +218,7 @@ def validate_results(validation_file: Path, output_report: Path | None = None) -
         "plus": validate_plus(reports.get("plus", {})),
         "invest": validate_invest(reports.get("invest", {})),
         "ecosystem": validate_ecosystem(reports.get("ecosystem", {})),
+        "subsidence_water": validate_subsidence_water(reports.get("subsidence_water", {})),
         "map": validate_map(reports.get("map", {})),
     }
     sections = {name: all_sections[name] for name in required_sections}

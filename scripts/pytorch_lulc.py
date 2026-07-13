@@ -67,6 +67,8 @@ def validate_package(package: Path, verify_weights: bool = True) -> dict[str, An
         errors.append("bands, band_indexes, mean, and std must have equal non-zero lengths")
     if any(not isinstance(item, int) or item < 1 for item in indexes):
         errors.append("band_indexes must be positive 1-based integers")
+    if len(set(indexes)) != len(indexes):
+        errors.append("band_indexes must not contain duplicates")
     if any(not isinstance(item, (int, float)) or item <= 0 for item in std):
         errors.append("all std values must be positive numbers")
     for field in ("sensor", "resolution_m", "value_range", "scale"):
@@ -78,6 +80,8 @@ def validate_package(package: Path, verify_weights: bool = True) -> dict[str, An
     if value_range is not None and (not isinstance(value_range, list) or len(value_range) != 2 or
                                     not all(isinstance(item, (int, float)) for item in value_range) or value_range[0] >= value_range[1]):
         errors.append("input.value_range must be [minimum, maximum] when supplied")
+    if input_config.get("sensor") is not None and (not isinstance(input_config["sensor"], str) or not input_config["sensor"].strip()):
+        errors.append("input.sensor must be a non-empty string when supplied")
     patch_size = input_config.get("patch_size")
     stride = input_config.get("stride")
     if not isinstance(patch_size, int) or patch_size < 16:
@@ -172,13 +176,30 @@ def infer(package: Path, input_raster: Path, class_output: Path, confidence_outp
         low_confidence_output.parent.mkdir(parents=True, exist_ok=True)
     try:
         with rasterio.open(input_raster) as source:
+            if not source.crs:
+                raise ValueError("input raster CRS is missing")
             if max(indexes) > source.count:
                 raise ValueError(f"input raster has {source.count} bands but model requests {max(indexes)}")
+            expected_sensor = input_config.get("sensor")
+            actual_sensor = source.tags().get("sensor") or source.tags().get("SENSOR") or source.tags().get("platform")
+            if expected_sensor and actual_sensor and str(expected_sensor).lower() != str(actual_sensor).lower():
+                raise ValueError(f"input sensor {actual_sensor} differs from model contract {expected_sensor}")
             required_resolution = input_config.get("resolution_m")
             if required_resolution is not None:
                 actual_resolution = (abs(float(source.transform.a)) + abs(float(source.transform.e))) / 2
                 if abs(actual_resolution - float(required_resolution)) > max(1e-6, float(required_resolution) * 0.01):
                     raise ValueError(f"input resolution {actual_resolution:g} differs from model contract {float(required_resolution):g} m")
+            expected_range = input_config.get("value_range")
+            if expected_range is not None:
+                observed_min, observed_max = None, None
+                for _, window in source.block_windows(1):
+                    values = source.read(indexes, window=window, masked=True)
+                    finite = values.compressed()
+                    if finite.size:
+                        observed_min = float(finite.min()) if observed_min is None else min(observed_min, float(finite.min()))
+                        observed_max = float(finite.max()) if observed_max is None else max(observed_max, float(finite.max()))
+                if observed_min is not None and (observed_min < float(expected_range[0]) or observed_max > float(expected_range[1])):
+                    raise ValueError("input raster values fall outside the model value_range contract")
             height, width = source.height, source.width
             probability_sum = np.memmap(cache / "probabilities.dat", mode="w+", dtype="float32",
                                         shape=(len(class_ids), height, width))

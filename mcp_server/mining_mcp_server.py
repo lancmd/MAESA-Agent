@@ -30,10 +30,11 @@ INPUT_PATH_KEYS = {"path", "project_file", "project", "datastack", "model_packag
                    "criteria_table", "config", "samples_file", "reference_raster", "predicted_raster", "baseline_raster",
                    "workflow_raster", "independent_raster", "scores_table", "candidates_table", "sample_table", "samples_table",
                    "validation_file", "input", "inputs", "aprx", "symbology_layer", "dem", "subsidence_depth",
-                   "water_boundary", "core_driver_input", "carbon_pools_path"}
+                   "water_boundary", "core_driver_input", "carbon_pools_path", "imagery", "historical_lulc", "lulc_baseline",
+                   "driver_factors", "mine_boundary", "roi", "training_roi", "subsidence_water_boundary"}
 OUTPUT_PATH_KEYS = {"output", "output_job", "workspace", "class_output", "confidence_output", "low_confidence_output",
                     "output_raster", "output_report", "expected_output", "output_directory", "water_depth_output",
-                    "volume_table", "carbon_table", "pdf", "png", "aprx_output", "validation_output"}
+                    "volume_table", "carbon_table", "pdf", "png", "aprx_output", "validation_output", "model_workspace"}
 
 
 def allowed_input_roots() -> list[Path]:
@@ -52,26 +53,42 @@ def allowed_output_root() -> Path:
     return Path(value).expanduser().resolve()
 
 
-def guard_paths(value: Any, key: str | None = None) -> None:
+def _path_role(key: str | None, inherited: str | None) -> str | None:
+    if key in OUTPUT_PATH_KEYS:
+        return "output"
+    if key in INPUT_PATH_KEYS:
+        return "input"
+    normalized = (key or "").lower()
+    if normalized.startswith("output_") or normalized.endswith(("_output", "_output_path", "_output_file")):
+        return "output"
+    if any(token in normalized for token in ("path", "file", "raster", "vector", "imagery", "lulc", "boundary", "roi", "datastack", "table", "workspace", "directory")):
+        return inherited or "input"
+    return inherited
+
+
+def guard_paths(value: Any, key: str | None = None, inherited: str | None = None) -> None:
     """Apply one local root policy to direct MCP invocations and nested specs."""
+    role = _path_role(key, inherited)
     if isinstance(value, dict):
         for nested_key, nested_value in value.items():
-            guard_paths(nested_value, str(nested_key))
+            guard_paths(nested_value, str(nested_key), role)
         return
     if isinstance(value, list):
         for item in value:
-            guard_paths(item, key)
+            guard_paths(item, key, role)
         return
-    if not isinstance(value, str) or not value or key is None:
+    if not isinstance(value, str) or not value or role is None:
         return
-    if key in INPUT_PATH_KEYS or key in OUTPUT_PATH_KEYS:
-        if is_unc(value):
-            raise PathSafetyError(f"{key} cannot use a UNC/network path")
-        path = Path(os.path.expandvars(value)).expanduser().resolve()
-        if key in INPUT_PATH_KEYS:
-            require_within(path, allowed_input_roots(), f"MCP input {key}")
-        else:
-            require_within(path, [allowed_output_root()], f"MCP output {key}")
+    if is_unc(value):
+        raise PathSafetyError(f"{key} cannot use a UNC/network path")
+    candidate = Path(os.path.expandvars(value)).expanduser()
+    if ".." in candidate.parts:
+        raise PathSafetyError(f"{key} cannot use parent-directory traversal")
+    path = candidate.resolve()
+    if role == "input":
+        require_within(path, allowed_input_roots(), f"MCP input {key}")
+    else:
+        require_within(path, [allowed_output_root()], f"MCP output {key}")
 
 
 def is_loopback_host(host: str | None) -> bool:
