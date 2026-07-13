@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import uuid
@@ -15,6 +16,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from workflow_agent import probe_software  # noqa: E402
+from path_safety import PathSafetyError, is_unc, require_within  # noqa: E402
 
 
 def response(envelope: dict[str, Any], status: str, **values: Any) -> dict[str, Any]:
@@ -30,6 +32,14 @@ def run(command: list[str], cwd: Path) -> tuple[int, str]:
     process = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, encoding="utf-8", errors="replace", check=False)
     return process.returncode, process.stdout or ""
+
+
+def mcp_workspace(value: str) -> Path:
+    if is_unc(value):
+        raise PathSafetyError("MCP workspace cannot be a UNC/network path")
+    workspace = Path(value).expanduser().resolve()
+    root = Path(os.getenv("MINING_GIS_MCP_WORKSPACE", ROOT / "outputs" / "mcp")).expanduser().resolve()
+    return require_within(workspace, [root], "MCP workspace")
 
 
 def capabilities(backend: str) -> dict[str, Any]:
@@ -53,21 +63,23 @@ def handle_arcgis(envelope: dict[str, Any]) -> dict[str, Any]:
     if not propy:
         return response(envelope, "failed", error="ArcGIS Pro backend is unavailable")
     if operation == "dataset.inspect":
-        workspace = (ROOT / "outputs" / "mcp_inspect" / uuid.uuid4().hex).resolve()
+        workspace = (ROOT / "outputs" / "mcp" / "inspect" / uuid.uuid4().hex).resolve()
         output = workspace / "dataset.json"
-        spec = {"environment": {"overwriteOutput": True}, "operations": [{
+        spec = {"environment": {"overwriteOutput": False}, "operations": [{
             "id": "inspect", "type": "describe", "input": params["path"], "output": str(output)
         }]}
     elif operation == "arcgis.run_operations":
-        workspace = Path(params["workspace"]).expanduser().resolve()
+        workspace = mcp_workspace(params["workspace"])
         spec = params["spec"]
     else:
         return response(envelope, "failed", error=f"unsupported ArcGIS operation: {operation}")
     workspace.mkdir(parents=True, exist_ok=True)
     spec_path = workspace / f"mcp_spec_{envelope['request_id']}.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=True, indent=2), encoding="utf-8")
-    code, log = run([propy, str(ROOT / "scripts" / "arcgis_ops.py"), "--spec", str(spec_path),
-                     "--workspace", str(workspace)], workspace)
+    command = [propy, str(ROOT / "scripts" / "arcgis_ops.py"), "--spec", str(spec_path), "--workspace", str(workspace)]
+    if params.get("confirm_overwrite"):
+        command.append("--confirm-overwrite")
+    code, log = run(command, workspace)
     log_path = workspace / f"mcp_{envelope['request_id']}.log"
     log_path.write_text(log, encoding="utf-8")
     if code:
@@ -86,7 +98,7 @@ def handle_invest(envelope: dict[str, Any]) -> dict[str, Any]:
     model = "carbon" if operation == "invest.run_carbon" else params.get("model")
     if model not in {"carbon", "annual_water_yield", "habitat_quality"}:
         return response(envelope, "failed", error="supported InVEST models are carbon, annual_water_yield, habitat_quality")
-    workspace = Path(params["workspace"]).expanduser().resolve()
+    workspace = mcp_workspace(params["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     code, log = run([executable, "run", model, "-l", "-d",
                      str(Path(params["datastack"]).expanduser().resolve()), "-w", str(workspace)], workspace)

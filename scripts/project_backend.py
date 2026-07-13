@@ -37,7 +37,8 @@ def main() -> int:
         params = envelope["parameters"]
         output = params.get("output_job")
         compiled = compile_workflow(Path(params["project_file"]), Path(output) if output else None)
-        runner = JobRunner(Path(compiled["workflow_job"]), bool(params.get("dry_run")), bool(params.get("continue_on_error")))
+        runner = JobRunner(Path(compiled["workflow_job"]), bool(params.get("dry_run")),
+                           bool(params.get("continue_on_error")), bool(params.get("confirm_overwrite")))
         return_code = runner.run()
         state = json.loads(runner.state_path.read_text(encoding="utf-8")) if runner.state_path.exists() else {"stages": {}}
         statuses = {item.get("status") for item in state.get("stages", {}).values()}

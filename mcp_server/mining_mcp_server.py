@@ -20,6 +20,9 @@ from mcp.server.fastmcp import FastMCP
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from plus_contract import re_contract_errors  # noqa: E402
+from path_safety import is_unc  # noqa: E402
 DEFAULT_REGISTRY = ROOT / "interfaces" / "backend_registry.json"
 EXAMPLE_REGISTRY = ROOT / "interfaces" / "backend_registry.example.json"
 VALID_PLUS_SCENARIOS = frozenset({"ND", "UD", "EP", "RE"})
@@ -183,11 +186,11 @@ def compile_project_workflow(project_file: str, output_job: str | None = None, b
 
 @mcp.tool()
 def run_local_project(project_file: str, output_job: str | None = None, dry_run: bool = False,
-                      continue_on_error: bool = False, backend: str = "project") -> str:
+                      continue_on_error: bool = False, confirm_overwrite: bool = False, backend: str = "project") -> str:
     """Compile and run the locally available stages from one project configuration, preserving logs and stage state."""
     return json_result(registry.call(backend, "project.run_workflow", {
         "project_file": project_file, "output_job": output_job, "dry_run": dry_run,
-        "continue_on_error": continue_on_error,
+        "continue_on_error": continue_on_error, "confirm_overwrite": confirm_overwrite,
     }))
 
 
@@ -244,9 +247,12 @@ def run_envi_classification(input_raster: str, training_vector: str, output_rast
 
 
 @mcp.tool()
-def run_arcgis_operations(spec: dict[str, Any], workspace: str, backend: str = "arcgis") -> str:
+def run_arcgis_operations(spec: dict[str, Any], workspace: str, confirm_overwrite: bool = False,
+                          backend: str = "arcgis") -> str:
     """Run declarative ArcGIS raster/vector operations using a software bridge rather than an installation path."""
-    return json_result(registry.call(backend, "arcgis.run_operations", {"spec": spec, "workspace": workspace}))
+    return json_result(registry.call(backend, "arcgis.run_operations", {
+        "spec": spec, "workspace": workspace, "confirm_overwrite": confirm_overwrite,
+    }))
 
 
 @mcp.tool()
@@ -259,17 +265,13 @@ def run_plus_scenario(project: str, scenario: str, workspace: str,
     scenario_parameters = parameters or {}
     if scenario_code == "RE":
         resource = scenario_parameters.get("resource_extraction")
-        if not isinstance(resource, dict):
-            return json_result({"status": "failed", "error": "RE requires parameters.resource_extraction"})
-        if resource.get("core_driver") != "subsidence_depth":
-            return json_result({"status": "failed", "error": "RE core_driver must be subsidence_depth"})
-        if not resource.get("subsidence_depth_raster"):
-            return json_result({"status": "failed", "error": "RE requires an aligned subsidence_depth_raster, not raw w.dat or a rendered cloud image"})
-        if resource.get("depth_unit") != "m" or resource.get("depth_convention") != "positive_down":
-            return json_result({"status": "failed", "error": "RE depth raster must use metres and the positive_down convention"})
-        additional = resource.get("additional_driver_factors")
-        if not isinstance(additional, list) or not additional:
-            return json_result({"status": "failed", "error": "RE requires one or more additional driver factors"})
+        errors = re_contract_errors(resource)
+        if errors:
+            return json_result({"status": "failed", "error": "; ".join(errors)})
+        driver = Path(resource["core_driver_input"]).expanduser()
+        value = str(driver)
+        if not driver.is_file() or is_unc(value):
+            return json_result({"status": "failed", "error": f"RE core_driver_input is not a local TIFF file: {value}"})
     return json_result(registry.call(backend, "plus.run_scenario", {
         "project": project, "scenario": scenario_code, "workspace": workspace, "parameters": scenario_parameters
     }))

@@ -1,6 +1,6 @@
 {
   "environment": {
-    "overwriteOutput": true,
+    "overwriteOutput": false,
     "snapRaster": "dem.tif",
     "cellSize": "dem.tif",
     "extent": "dem.tif"

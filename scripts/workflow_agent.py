@@ -14,6 +14,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from artifact_manifest import write_records
+from path_safety import PathSafetyError, is_unc, require_within, resolved
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,6 +42,19 @@ def first_existing(candidates: list[str | None]) -> str | None:
         if item and Path(item).exists():
             return str(Path(item).resolve())
     return None
+
+
+def software_version(name: str, executable: str | None) -> str | None:
+    """Probe command-line versions where the vendor executable documents one safely."""
+    if not executable or name not in {"invest", "gdalinfo"}:
+        return None
+    try:
+        process = subprocess.run([executable, "--version"], text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, encoding="utf-8", errors="replace",
+                                 timeout=10, check=False)
+        return (process.stdout or "").strip().splitlines()[0] if process.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
 
 
 def local_paths() -> dict[str, Any]:
@@ -83,18 +99,28 @@ def probe_software(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {"probed_at": now(), "platform": sys.platform, "software": {}}
     for name, candidates in path_candidates.items():
         executable = first_existing(candidates)
-        result["software"][name] = {"available": bool(executable), "path": executable}
+        result["software"][name] = {"available": bool(executable), "path": executable,
+                                    "version": software_version(name, executable)}
     return result
 
 
 class JobRunner:
-    def __init__(self, job_path: Path, dry_run: bool = False, continue_on_error: bool = False):
+    def __init__(self, job_path: Path, dry_run: bool = False, continue_on_error: bool = False,
+                 confirm_overwrite: bool = False):
         self.job_path = job_path.resolve()
         self.job_dir = self.job_path.parent
         self.job = load_json(self.job_path)
+        self.job["_path"] = str(self.job_path)
         if self.job.get("schema_version") != 1:
             raise ValueError("Only workflow job schema_version 1 is supported")
+        if is_unc(self.job.get("workspace", "")):
+            raise PathSafetyError("workflow workspace cannot be a UNC/network path")
         self.workspace = self.resolve(self.job.get("workspace", "outputs/job"), self.job_dir)
+        security = self.job.get("security", {}) if isinstance(self.job.get("security", {}), dict) else {}
+        self.output_root = self.resolve(security.get("output_root", str(self.workspace)), self.job_dir)
+        require_within(self.workspace, [self.output_root], "workflow workspace")
+        raw_input_roots = security.get("input_roots", [str(self.job_dir)])
+        self.input_roots = [self.resolve(str(item), self.job_dir) for item in raw_input_roots]
         self.workspace.mkdir(parents=True, exist_ok=True)
         for folder in ("logs", "generated", "intermediate", "outputs", "validation"):
             (self.workspace / folder).mkdir(exist_ok=True)
@@ -106,6 +132,7 @@ class JobRunner:
         write_json(self.workspace / "software_probe.json", self.probe)
         self.dry_run = dry_run
         self.continue_on_error = continue_on_error
+        self.confirm_overwrite = confirm_overwrite or bool(security.get("confirm_overwrite", False))
 
     @staticmethod
     def resolve(value: str, base: Path) -> Path:
@@ -113,6 +140,8 @@ class JobRunner:
         return path.resolve() if path.is_absolute() else (base / path).resolve()
 
     def stage_path(self, value: str) -> Path:
+        if is_unc(value):
+            raise PathSafetyError(f"UNC/network path is not allowed: {value}")
         path = Path(os.path.expandvars(value)).expanduser()
         if path.is_absolute():
             return path.resolve()
@@ -124,21 +153,42 @@ class JobRunner:
             return root_candidate
         return (self.workspace / path).resolve()
 
+    def output_path(self, value: str) -> Path:
+        path = self.stage_path(value)
+        return require_within(path, [self.workspace], "stage output")
+
     def save_state(self) -> None:
         self.state["updated_at"] = now()
         write_json(self.state_path, self.state)
 
     def declared_outputs_exist(self, stage: dict[str, Any]) -> bool:
         outputs = stage.get("outputs", [])
-        return bool(outputs) and all(self.stage_path(item).exists() for item in outputs)
+        return bool(outputs) and all(self.output_path(item).exists() for item in outputs)
 
     def validate_stage(self, stage: dict[str, Any]) -> list[str]:
         errors = []
         if not stage.get("id") or not stage.get("adapter"):
             errors.append("stage requires id and adapter")
         for value in stage.get("inputs", []):
-            if "replace_" in value or not self.stage_path(value).exists():
-                errors.append(f"missing input: {value}")
+            try:
+                path = self.stage_path(value)
+                if not (path.exists() and (path.is_relative_to(self.workspace) or any(
+                        path.is_relative_to(root) for root in self.input_roots))):
+                    errors.append(f"missing or disallowed input: {value}")
+            except (OSError, PathSafetyError, TypeError) as error:
+                errors.append(f"invalid input {value}: {error}")
+        inputs = {str(self.stage_path(value)) for value in stage.get("inputs", []) if isinstance(value, str)}
+        for value in stage.get("outputs", []):
+            try:
+                path = self.output_path(value)
+                if str(path) in inputs:
+                    errors.append(f"stage output would overwrite an input: {path}")
+                prior = self.state.get("stages", {}).get(stage.get("id", ""), {})
+                takeover = stage.get("adapter") == "plus" and prior.get("status") in {"prepared", "waiting_interactive"}
+                if path.exists() and not self.confirm_overwrite and not takeover:
+                    errors.append(f"existing output needs --confirm-overwrite: {path}")
+            except (OSError, PathSafetyError, TypeError) as error:
+                errors.append(f"invalid output {value}: {error}")
         adapter = stage.get("adapter")
         required = {"arcgis": "arcgis_propy", "invest": "invest", "envi": "idl"}.get(adapter)
         if required and not self.probe["software"][required]["available"]:
@@ -174,8 +224,10 @@ class JobRunner:
     def run_arcgis(self, stage: dict[str, Any]) -> dict[str, Any]:
         propy = self.probe["software"]["arcgis_propy"]["path"]
         spec = self.stage_path(stage["spec"])
-        return self.command(stage["id"], [propy, str(ROOT / "scripts" / "arcgis_ops.py"), "--spec", str(spec),
-                                           "--workspace", str(self.workspace)])
+        command = [propy, str(ROOT / "scripts" / "arcgis_ops.py"), "--spec", str(spec), "--workspace", str(self.workspace)]
+        if self.confirm_overwrite:
+            command.append("--confirm-overwrite")
+        return self.command(stage["id"], command)
 
     def run_invest(self, stage: dict[str, Any]) -> dict[str, Any]:
         executable = self.probe["software"]["invest"]["path"]
@@ -282,6 +334,14 @@ class JobRunner:
                 self.save_state()
             if failures and not self.continue_on_error:
                 break
+        try:
+            records = write_records(self.workspace, self.job, self.state, self.probe)
+            self.state["records"] = records
+            self.save_state()
+        except Exception as error:
+            self.state["records_error"] = str(error)
+            self.save_state()
+            failures += 1
         return 1 if failures else 0
 
 
@@ -297,6 +357,7 @@ def main() -> int:
             command.add_argument("--stage")
             command.add_argument("--dry-run", action="store_true")
             command.add_argument("--continue-on-error", action="store_true")
+            command.add_argument("--confirm-overwrite", action="store_true")
     args = parser.parse_args()
     if args.action == "probe":
         result = probe_software()
@@ -305,7 +366,7 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     runner = JobRunner(args.job, getattr(args, "dry_run", False),
-                       getattr(args, "continue_on_error", False))
+                       getattr(args, "continue_on_error", False), getattr(args, "confirm_overwrite", False))
     if args.action == "plan":
         print(json.dumps(runner.plan(), ensure_ascii=False, indent=2))
         return 0

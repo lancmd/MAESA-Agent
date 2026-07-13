@@ -1,6 +1,6 @@
 {
   "environment": {
-    "overwriteOutput": true,
+    "overwriteOutput": false,
     "snapRaster": "replace_with_master_lulc.tif",
     "cellSize": "replace_with_master_lulc.tif",
     "extent": "replace_with_master_lulc.tif"

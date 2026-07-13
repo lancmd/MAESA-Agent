@@ -56,7 +56,8 @@ async def run() -> None:
             if project_validation.get("status") != "completed":
                 raise AssertionError(f"local project validation failed: {project_validation}")
             compilation_result = await session.call_tool("compile_project_workflow", {
-                "project_file": str(project_file), "output_job": str(ROOT / "outputs" / "mcp_project" / "workflow_job.json"),
+                "project_file": str(project_file),
+                "output_job": str(ROOT / "outputs" / "local_project_smoke" / "generated" / "mcp_workflow_job.json"),
             })
             compilation = json.loads(compilation_result.content[0].text)
             if compilation.get("status") != "completed":
@@ -125,6 +126,10 @@ async def run() -> None:
             capability = json.loads(capability_result.content[0].text)
             if capability.get("status") != "completed":
                 raise AssertionError(f"local command bridge failed: {capability}")
+            invest_capability_result = await session.call_tool("backend_capabilities", {"backend": "invest"})
+            invest_capability = json.loads(invest_capability_result.content[0].text)
+            if invest_capability.get("status") != "completed":
+                raise AssertionError(f"local InVEST command bridge failed: {invest_capability}")
             end_to_end = {}
             model_package = ROOT / "tests" / "fixtures" / "model_package"
             model_result = await session.call_tool("validate_lulc_model", {"model_package": str(model_package)})
@@ -148,14 +153,14 @@ async def run() -> None:
                     raise AssertionError(f"PyTorch MCP inference failed: {torch_inference}")
                 end_to_end["pytorch_inference"] = torch_inference["result"]["status"]
             raster = ROOT / "outputs" / "arcgis_smoke" / "lulc.tif"
-            if raster.exists():
+            if raster.exists() and capability["result"].get("available"):
                 inspected_result = await session.call_tool("inspect_dataset", {"path": str(raster)})
                 inspected = json.loads(inspected_result.content[0].text)
                 if inspected.get("status") != "completed" or inspected["result"].get("factory_code") != 32650:
                     raise AssertionError(f"ArcGIS MCP inspection failed: {inspected}")
                 end_to_end["arcgis_crs"] = inspected["result"]["factory_code"]
             datastack = ROOT / "tests" / "invest_carbon_smoke_datastack.json"
-            if datastack.exists() and raster.exists():
+            if datastack.exists() and raster.exists() and invest_capability["result"].get("available"):
                 invest_workspace = ROOT / "outputs" / "mcp_invest_smoke"
                 invest_result = await session.call_tool("run_invest_carbon", {
                     "datastack": str(datastack), "workspace": str(invest_workspace)

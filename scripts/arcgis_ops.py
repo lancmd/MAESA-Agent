@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from path_safety import PathSafetyError, validate_arcgis_spec_outputs
 from subsidence_water_carbon import calculate_components, calculate_invest_replacement
 
 
@@ -464,9 +465,14 @@ def main() -> int:
     parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--validate-spec", action="store_true")
     parser.add_argument("--probe", action="store_true")
+    parser.add_argument("--confirm-overwrite", action="store_true")
     args = parser.parse_args()
     spec = load_json(args.spec.resolve())
     errors = validate(spec)
+    try:
+        validate_arcgis_spec_outputs(spec, args.workspace.resolve(), args.confirm_overwrite)
+    except PathSafetyError as error:
+        errors.append(str(error))
     if errors:
         raise SystemExit("\n".join(errors))
     if args.validate_spec:

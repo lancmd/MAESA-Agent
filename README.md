@@ -1,88 +1,79 @@
-# Intelligent Agent for Mining Area Ecological Space Analysis
+# 矿区生态空间分析智能体
 
-面向矿区本地遥感影像分类、PLUS 情景模拟、InVEST 碳储量和生态服务分析的执行型 Skill。MCP 在本项目中只是一层本地工具协议：Agent 将结构化任务交给同一台机器上的 Python 进程、桌面软件或本地桥接器。服务默认监听 `127.0.0.1`，不把 ArcGIS Pro、ENVI、PLUS 或 InVEST 暴露为公网控制服务。
+这个仓库把矿区土地利用分类、PLUS 情景预测、InVEST 碳储量、沉陷积水碳库、生态服务评价和 ArcGIS Pro 制图组织成一个本地工作流。MCP 只连接同一台电脑上的进程；不会把桌面软件开放到公网。
 
-## 安装到 Agent 平台
+## 安装与启动
 
-先把仓库安装为 Skill。以下命令适用于 Codex Desktop 的 Windows PowerShell：
+在 Windows PowerShell 中安装 Skill：
 
 ```powershell
 npx skills add lancmd/MAESA-Agent -g
 ```
 
-如果 Windows 环境中没有 `npx` 或 `node`，可以临时使用 Codex 管理的 Node.js 运行时：
+若系统没有 Node.js，可使用 Codex 自带运行时：
 
 ```powershell
-$runtimeRoot = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies'
-$env:PATH = (Join-Path $runtimeRoot 'node\bin') + ';' + (Join-Path $runtimeRoot 'native\git\cmd') + ';' + $env:PATH
-& (Join-Path $runtimeRoot 'bin\fallback\pnpm.cmd') dlx skills add lancmd/MAESA-Agent -g
+$runtime = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies'
+$env:PATH = (Join-Path $runtime 'node\bin') + ';' + (Join-Path $runtime 'native\git\cmd') + ';' + $env:PATH
+& (Join-Path $runtime 'bin\fallback\pnpm.cmd') dlx skills add lancmd/MAESA-Agent -g
 ```
 
-进入安装后的 Skill 目录，再初始化本地运行环境并启动 MCP 服务：
+进入 Skill 目录后执行：
 
 ```powershell
 .\scripts\setup_agent.ps1 -WithPyTorch
 .\scripts\start_agent_mcp.ps1
 ```
 
-`agents/openai.yaml` 指向本机地址 `http://127.0.0.1:8765/mcp`。在 Agent 平台刷新 Skill 或重新打开会话后，智能体即可发现工具。服务仅供本机 Agent 使用；不要将该端口映射到公网或设置为外网回调地址。
+MCP 只绑定 `127.0.0.1`、`localhost` 或 `::1`。软件路径来自系统 `PATH`、环境变量或未提交的 `config/local_paths.json`；可从 [local_paths.example.json](config/local_paths.example.json) 复制配置。
 
-### 本地软件边界
+## 从项目配置运行
 
-安装 Skill 并不等于所有软件都已可执行。启动前可运行 `python scripts/verify_agent_install.py` 查看本地环境和后端注册表。
-
-| 能力 | 可执行条件 |
-|---|---|
-| PyTorch 分类 | 已安装可选依赖，并提供可验证的模型包和本地影像。 |
-| ArcGIS Pro / InVEST | 本机已安装并能被适配器探测到。 |
-| ENVI | 本机有有效许可，且本地 ENVI 桥接器已启动。 |
-| PLUS | 本机有可用版本及对应的本地桥接器；缺少桥接器时项目只能准备输入和任务包，不能宣称已完成预测。 |
-
-桥接器、许可或交互登录尚未就绪时，工具会返回 `prepared`、`waiting_interactive` 或 `failed`，并保留日志。它不会尝试远程控制软件，也不会绕过商业软件许可。
-
-## 快速开始（手动部署）
+从 [local_project.json](templates/local_project.json) 复制出 `project.json`，启用需要的模块并填写输入路径，然后运行：
 
 ```powershell
-Copy-Item interfaces/backend_registry.example.json interfaces/backend_registry.json
-python -m pip install -e "mcp_server[validation]"
-mining-gis-mcp --transport streamable-http --host 127.0.0.1 --port 8765
+python scripts/project_validator.py --project project.json
+python scripts/project_workflow.py --project project.json --run
 ```
 
-需要运行本地 PyTorch 分类时安装可选依赖：
+模板默认不启用任何分析模块。分类只需要影像和对应的 ENVI ROI 或 PyTorch 模型包；已有 LULC、生态服务或积水库容项目不会被要求填写无关影像、ROI、矿界或碳密度表。
 
-```powershell
-python -m pip install -e "mcp_server[pytorch]"
+`security.input_roots` 列出可读数据目录，`security.output_root` 约束工作目录。派生文件只写入 `workspace`，UNC 路径、`..` 越界写入和覆盖源输入都会被拒绝。对已有派生文件进行覆盖时，加 `--confirm-overwrite`。
+
+## PLUS 四情景与续跑
+
+启用 PLUS 后，编译器为 ND、UD、EP、RE 分别建立独立目录：
+
+```text
+workspace/outputs/plus/ND/PLUS_ND.tif
+workspace/outputs/plus/UD/PLUS_UD.tif
+workspace/outputs/plus/EP/PLUS_EP.tif
+workspace/outputs/plus/RE/PLUS_RE.tif
 ```
 
-`interfaces/backend_registry.json` 只注册本地命令、回环 socket 或回环 HTTP 后端。默认示例使用命令后端；ENVI 可接本地 socket。请通过环境变量或 `config/local_paths.example.json` 提供本机软件路径，不要把个人磁盘路径写入共享配置。没有 MCP 客户端时，仍可使用 `scripts/workflow_agent.py` 作为本地入口。
+每个目录有独立请求包和状态记录。配置本机版本对应的 `plus_bridge_command` 后，桥接器需要将结果写到上述固定位置；工作流随后检查 CRS、网格、整数编码、类别代码及碳密度覆盖。没有桥接器时阶段状态为 `prepared`。在 PLUS GUI 或 Computer Use 完成后，只要将结果写到对应路径，再次运行同一项目即可自动接管并继续后续阶段。
 
-## 本地项目主流程
+RE 情景只使用统一的 `resource_extraction` 契约：`core_driver_input`、`core_driver_unit: "m"`、`core_driver_convention: "positive_down"`。项目模板可用 `inputs.subsidence_depth_raster` 作为简写，桥接器实际收到的是已解析的对齐 TIFF；`w.dat` 只是外部沉陷计算的来源记录。
 
-以 `templates/local_project.json` 建立项目：用户提供本地遥感影像、ROI、矿区边界、碳密度、PLUS 驱动因子，以及可选训练 ROI、PyTorch 模型、DEM、`w.dat`/沉陷深度和生态服务指标表。先检查项目配置：
+## 情景闭环与验收
 
-```powershell
-python scripts/project_validator.py --project <project.json>
-python scripts/project_workflow.py --project <project.json> --run
+当 PLUS、InVEST 与生态服务同时启用时，工作流按下面的依赖执行：
+
+```text
+PLUS_ND/UD/EP/RE → InVEST Carbon_ND/UD/EP/RE
+                 → 情景碳储表 → 生态服务评分、权衡、敏感性、情景比较、GeoDetector
 ```
 
-第二条命令从同一份项目配置生成并运行工作流，不需要手工维护 `workflow_job.json`。项目后端会按设置选择 ENVI 或 PyTorch 分类，运行 PLUS、InVEST、沉陷积水库容和 Min-Max/AHP 生态服务。生态服务可组合碳储量、年水源供给和生境质量，并支持水源供给校准、协同/权衡、情景比较、敏感性与 GeoDetector 归因。PLUS 默认输出 ND（自然发展）、UD（城镇发展）、EP（生态保护）和 RE（资源开采）四种情景；RE 使用经外部概率积分法软件计算、转换并对齐后的正下沉深度 TIF 作为核心驱动，同时保留其他驱动因子。
+分类阶段可接入独立验证样本 CSV，并自动生成 `lulc_accuracy.json` 和 `confusion_matrix.csv`（OA、Macro-F1、Macro-IoU 与各类别 precision/recall/F1/IoU）。样本含 `x_field`、`y_field` 时，工作流直接从新生成的 LULC 栅格抽取预测类别；否则可使用样本表中已有的预测列。PLUS 输出通过空间预检；回算精度与多随机种子 FoM 可用 `validate_plus_backcast` 单独接入。生态服务阶段根据配置运行 Min-Max 或 AHP，并输出敏感性、权衡、情景比较和可选 GeoDetector 结果。
 
-`examples/huaibei_demo/` 提供匿名合成数据生成器、可验证项目配置、期望输出和基准指标。它用于检查安装与执行链，不代表真实矿区结论。
+每次运行结束，工作目录都会写出：
 
-空间结果可交给 ArcGIS Pro 的 `compose_layout` 处理。它在已有 `.aprx` 和布局模板的副本中添加任务列出的成果图层、应用 `.lyrx` 符号、更新标题与地图范围，并导出 PDF/PNG 和布局验证 JSON。布局验证会检查图层、图例元素、范围和分辨率；颜色、标签、顺序和遮挡仍需打开导出的 PDF/PNG 做视觉复核。
+- `outputs_manifest.json`：成果文件、类型、大小、SHA-256 和可用的空间元数据；
+- `provenance.json`：输入与模型哈希、参数、随机种子、软件探测结果和阶段时间；
+- `validation_summary.json`：阶段状态与验证文件清单。
 
-## 目录
+独立验证仍然有其边界：PLUS 的 FoM 需要回算参考图和多个种子结果；InVEST 一致性需要独立运行结果；地图的颜色、标签和遮挡需要查看导出的 PDF/PNG。
 
-- `scripts/`：本地执行器、项目编译器和软件适配脚本。
-- `deep_learning/`：PyTorch 模型包、推理和精度控制规范。
-- `mcp_server/`：仅监听本机的 MCP 工具服务。
-- `interfaces/`：本地桥接协议与后端注册表示例。
-- `execution/`：执行契约与后端能力边界。
-- `templates/`：项目、任务和 ArcGIS 操作清单模板。
-- `config/`：分类体系、数据源、矿区类型规则和本地路径示例。
-- `envi_classification/`、`arcgis_steps/`、`plus_model/`、`invest_carbon/`、`ecosystem_service/`：领域流程与参数说明。
-- `open_gis_workflows/`：开放 GIS 数据处理与验证规范。
+## 示例与目录
 
-常用本地模板：`templates/local_project.json`、`templates/arcgis_module_outputs.json`、`templates/ecosystem_service_config.json`。沉陷积水库容使用基准 DEM、正下沉深度栅格、遥感积水边界和水面高程；`w.dat` 先标准化为下沉深度，不能直接当作水深。启用沉陷积水复合碳库计算后，ArcGIS 会输出库容、水体碳、水生植被碳和底泥碳，并以复合碳库替换 InVEST 的沉陷积水面积碳。
-
-源数据保持只读，派生文件写入项目自己的 `workspace`。
+[examples/huaibei_demo](examples/huaibei_demo) 是合成数据演示，不含真实矿区结论。核心实现位于 `scripts/`；领域方法和操作说明位于 `plus_model/`、`invest_carbon/`、`ecosystem_service/`、`arcgis_steps/` 与 `envi_classification/`。

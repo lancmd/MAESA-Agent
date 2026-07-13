@@ -1,17 +1,23 @@
 {
   "schema_version": 2,
-  "project_id": "replace_me",
-  "workspace": "../outputs/replace_me",
+  "project_id": "my-mining-project",
+  "workspace": "runtime/my-mining-project",
+  "security": {
+    "input_roots": ["data"],
+    "output_root": "runtime",
+    "confirm_overwrite": false
+  },
   "inputs": {
-    "imagery": ["replace_with_local_multiband_image.tif"],
-    "roi": "replace_with_roi.gpkg",
-    "mine_boundary": "replace_with_mine_boundary.gpkg",
-    "carbon_density": "replace_with_carbon_density.csv",
+    "imagery": [],
+    "roi": null,
+    "mine_boundary": null,
+    "carbon_density": null,
     "historical_lulc": [],
     "lulc_baseline": null,
     "training_roi": null,
     "model_package": null,
     "dem": null,
+    "elevation_vertical_datum": null,
     "water_surface_elevation_m": null,
     "subsidence_depth_raster": null,
     "subsidence_w_dat": null,
@@ -34,12 +40,23 @@
     }
   },
   "classification": {
-    "enabled": true,
-    "engine": "pytorch",
+    "enabled": false,
+    "engine": "provided_lulc",
     "scheme": "high_water_coal_7class",
     "output_lulc": "outputs/lulc.tif",
     "output_confidence": "outputs/lulc_confidence.tif",
-    "envi_method": "maximum_likelihood"
+    "envi_method": "maximum_likelihood",
+    "accuracy": {
+      "enabled": false,
+      "validation_samples": null,
+      "reference_field": "reference",
+      "prediction_field": "prediction",
+      "x_field": null,
+      "y_field": null,
+      "samples_crs": null,
+      "output": "validation/lulc_accuracy.json",
+      "confusion_matrix": "validation/confusion_matrix.csv"
+    }
   },
   "plus": {
     "enabled": false,
@@ -54,7 +71,6 @@
       "core_driver_convention": "positive_down",
       "requires_master_grid_alignment": true,
       "additional_driver_factors": ["dem", "slope", "road_distance", "mine_distance"],
-      "water_susceptibility": null,
       "w_dat_preprocessing": {
         "source_unit": null,
         "source_convention": null,
@@ -64,65 +80,48 @@
     }
   },
   "invest": {
-    "enabled": true,
-    "lulc_source": "classification",
+    "enabled": false,
     "output_workspace": "outputs/invest",
     "datastack": null
   },
   "subsidence_water": {
     "enabled": false,
     "mode": "classify_only",
-    "workface_boundary": null,
     "water_level_elevation_m": null,
+    "water_level_vertical_datum": null,
     "output_depth_raster": "outputs/subsidence_water_depth.tif",
     "output_volume_table": "outputs/subsidence_water_volume.csv",
     "output_aquatic_vegetation_raster": "outputs/subsidence_aquatic_vegetation.tif",
     "output_bottom_sediment_raster": "outputs/subsidence_bottom_sediment.tif",
     "output_carbon_table": "outputs/subsidence_water_carbon.csv",
-    "composite_carbon": {
-      "water_carbon_density_g_c_m3": null,
-      "aquatic_vegetation_carbon_density_t_c_ha": null,
-      "bottom_sediment_carbon_density_t_c_ha": null,
-      "aquatic_vegetation_depth_threshold_m": null,
-      "bottom_sediment_assume_full_waterbed": false,
-      "invest_total_carbon_t_c": null,
-      "invest_subsidence_water_carbon_t_c": null
-    }
+    "composite_carbon": {}
   },
   "ecosystem_service": {
     "enabled": false,
     "method": "minmax",
-    "criteria_table": "replace_with_ecosystem_criteria.csv",
-    "config": "../templates/ecosystem_service_config.json",
-    "output_table": "outputs/ecosystem_service_scores.csv",
-    "service_models": {
-      "annual_water_yield_datastack": null,
-      "habitat_quality_datastack": null,
-      "water_yield_calibration_candidates": null
-    },
+    "criteria_table": null,
+    "generated_criteria_table": "outputs/ecosystem/scenario_criteria.csv",
+    "config": null,
+    "output_table": "outputs/ecosystem/service_scores.csv",
     "analysis": {
-      "tradeoff_fields": ["carbon_storage_t_c", "annual_water_yield_m3", "habitat_quality"],
+      "tradeoff_fields": [],
+      "sensitivity_enabled": true,
+      "sensitivity_relative_delta": 0.1,
       "scenario_field": "scenario",
       "reference_scenario": "ND",
+      "scenario_value_fields": ["ecosystem_service_score"],
       "geodetector_target_field": "ecosystem_service_score",
-      "geodetector_factor_fields": []
+      "geodetector_factor_fields": [],
+      "geodetector_samples": null
     }
   },
   "gis_outputs": {
-    "enabled": true,
+    "enabled": false,
     "aprx": null,
     "layout_name": null,
-    "map_name": null,
-    "map_frame_name": null,
-    "extent_from_layer": null,
-    "aprx_output": "outputs/maps/composed_project.aprx",
-    "title_element_name": null,
-    "title_text": null,
-    "legend_name": null,
     "layers": [],
-    "resolution": 300,
-    "pdf": "outputs/maps/final_layout.pdf",
-    "png": "outputs/maps/final_layout.png"
+    "pdf": null,
+    "png": null
   },
   "validation": {
     "enabled": false,

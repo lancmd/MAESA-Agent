@@ -1,5 +1,5 @@
 {
-  "environment": {"overwriteOutput": true},
+  "environment": {"overwriteOutput": false},
   "operations": [
     {
       "id": "compose_map",

@@ -13,7 +13,7 @@ from project_workflow import compile_workflow  # noqa: E402
 
 
 project = ROOT / "tests" / "fixtures" / "local_project" / "project.json"
-output = ROOT / "outputs" / "project_workflow_smoke" / "workflow_job.json"
+output = ROOT / "outputs" / "local_project_smoke" / "generated" / "workflow_job_smoke.json"
 report = compile_workflow(project, output)
 job = json.loads(output.read_text(encoding="utf-8"))
 assert job["schema_version"] == 1

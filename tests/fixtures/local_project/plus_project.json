@@ -2,6 +2,10 @@
   "schema_version": 2,
   "project_id": "plus-re-contract-smoke",
   "workspace": "../../../outputs/plus_re_contract_smoke",
+  "security": {
+    "input_roots": ["."],
+    "output_root": "../../../outputs"
+  },
   "inputs": {
     "imagery": ["imagery.tif"],
     "roi": "roi.gpkg",
