@@ -22,10 +22,56 @@ from mcp.server.fastmcp import FastMCP
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from plus_contract import re_contract_errors  # noqa: E402
-from path_safety import is_unc  # noqa: E402
+from path_safety import PathSafetyError, is_unc, require_within  # noqa: E402
 DEFAULT_REGISTRY = ROOT / "interfaces" / "backend_registry.json"
 EXAMPLE_REGISTRY = ROOT / "interfaces" / "backend_registry.example.json"
 VALID_PLUS_SCENARIOS = frozenset({"ND", "UD", "EP", "RE"})
+INPUT_PATH_KEYS = {"path", "project_file", "project", "datastack", "model_package", "input_raster", "training_vector",
+                   "criteria_table", "config", "samples_file", "reference_raster", "predicted_raster", "baseline_raster",
+                   "workflow_raster", "independent_raster", "scores_table", "candidates_table", "sample_table", "samples_table",
+                   "validation_file", "input", "inputs", "aprx", "symbology_layer", "dem", "subsidence_depth",
+                   "water_boundary", "core_driver_input", "carbon_pools_path"}
+OUTPUT_PATH_KEYS = {"output", "output_job", "workspace", "class_output", "confidence_output", "low_confidence_output",
+                    "output_raster", "output_report", "expected_output", "output_directory", "water_depth_output",
+                    "volume_table", "carbon_table", "pdf", "png", "aprx_output", "validation_output"}
+
+
+def allowed_input_roots() -> list[Path]:
+    raw = os.getenv("MINING_GIS_INPUT_ROOTS")
+    values = raw.split(os.pathsep) if raw else [str(ROOT)]
+    roots = [Path(value).expanduser().resolve() for value in values if value]
+    if not roots or any(is_unc(str(root)) for root in roots):
+        raise PathSafetyError("MINING_GIS_INPUT_ROOTS must contain one or more local directories")
+    return roots
+
+
+def allowed_output_root() -> Path:
+    value = os.getenv("MINING_GIS_OUTPUT_ROOT", str(ROOT / "outputs"))
+    if is_unc(value):
+        raise PathSafetyError("MINING_GIS_OUTPUT_ROOT cannot be a UNC/network path")
+    return Path(value).expanduser().resolve()
+
+
+def guard_paths(value: Any, key: str | None = None) -> None:
+    """Apply one local root policy to direct MCP invocations and nested specs."""
+    if isinstance(value, dict):
+        for nested_key, nested_value in value.items():
+            guard_paths(nested_value, str(nested_key))
+        return
+    if isinstance(value, list):
+        for item in value:
+            guard_paths(item, key)
+        return
+    if not isinstance(value, str) or not value or key is None:
+        return
+    if key in INPUT_PATH_KEYS or key in OUTPUT_PATH_KEYS:
+        if is_unc(value):
+            raise PathSafetyError(f"{key} cannot use a UNC/network path")
+        path = Path(os.path.expandvars(value)).expanduser().resolve()
+        if key in INPUT_PATH_KEYS:
+            require_within(path, allowed_input_roots(), f"MCP input {key}")
+        else:
+            require_within(path, [allowed_output_root()], f"MCP output {key}")
 
 
 def is_loopback_host(host: str | None) -> bool:
@@ -89,6 +135,7 @@ class BackendRegistry:
             "parameters": parameters,
         }
         try:
+            guard_paths(parameters)
             require_local_transport(config)
             transport = config.get("transport")
             if transport == "http":
@@ -185,6 +232,14 @@ def compile_project_workflow(project_file: str, output_job: str | None = None, b
 
 
 @mcp.tool()
+def prepare_all_plus_scenarios(project_file: str, output_job: str | None = None, backend: str = "project") -> str:
+    """Create ND/UD/EP/RE request packs and GUI checklists without opening multiple PLUS windows."""
+    return json_result(registry.call(backend, "project.prepare_plus_scenarios", {
+        "project_file": project_file, "output_job": output_job,
+    }))
+
+
+@mcp.tool()
 def run_local_project(project_file: str, output_job: str | None = None, dry_run: bool = False,
                       continue_on_error: bool = False, confirm_overwrite: bool = False, backend: str = "project") -> str:
     """Compile and run the locally available stages from one project configuration, preserving logs and stage state."""
@@ -192,6 +247,23 @@ def run_local_project(project_file: str, output_job: str | None = None, dry_run:
         "project_file": project_file, "output_job": output_job, "dry_run": dry_run,
         "continue_on_error": continue_on_error, "confirm_overwrite": confirm_overwrite,
     }))
+
+
+@mcp.tool()
+def submit_local_project(project_file: str, output_job: str | None = None, dry_run: bool = False,
+                         continue_on_error: bool = False, confirm_overwrite: bool = False, backend: str = "project") -> str:
+    """Submit a local workflow to the background job registry and return immediately with a job ID."""
+    return json_result(registry.call(backend, "project.submit_workflow", {
+        "project_file": project_file, "output_job": output_job, "dry_run": dry_run,
+        "continue_on_error": continue_on_error, "confirm_overwrite": confirm_overwrite,
+    }))
+
+
+@mcp.tool()
+def resume_job(project_file: str, output_job: str | None = None, continue_on_error: bool = False,
+               confirm_overwrite: bool = False, backend: str = "project") -> str:
+    """Resume a locally compiled workflow from its persisted agent state in the background."""
+    return submit_local_project(project_file, output_job, False, continue_on_error, confirm_overwrite, backend)
 
 
 @mcp.tool()
@@ -285,9 +357,9 @@ def run_invest_carbon(datastack: str, workspace: str, backend: str = "invest") -
 
 @mcp.tool()
 def run_invest_ecosystem_model(model: str, datastack: str, workspace: str, backend: str = "invest") -> str:
-    """Run InVEST annual_water_yield, habitat_quality, or carbon using a user-prepared current-version datastack."""
-    if model not in {"annual_water_yield", "habitat_quality", "carbon"}:
-        return json_result({"status": "failed", "error": "model must be annual_water_yield, habitat_quality, or carbon"})
+    """Run a local InVEST ecosystem-service model using a current-version datastack."""
+    if model not in {"annual_water_yield", "habitat_quality", "carbon", "sdr", "ndr"}:
+        return json_result({"status": "failed", "error": "model must be annual_water_yield, habitat_quality, carbon, sdr, or ndr"})
     return json_result(registry.call(backend, "invest.run_model", {
         "model": model, "datastack": datastack, "workspace": workspace
     }))
@@ -301,11 +373,13 @@ def validate_lulc_model(model_package: str, backend: str = "pytorch") -> str:
 
 @mcp.tool()
 def run_pytorch_lulc(model_package: str, input_raster: str, class_output: str,
-                     confidence_output: str, device: str = "auto", backend: str = "pytorch") -> str:
+                     confidence_output: str, device: str = "auto", low_confidence_output: str | None = None,
+                     low_confidence_threshold: float | None = None, backend: str = "pytorch") -> str:
     """Run tiled PyTorch LULC inference and create classification and confidence GeoTIFF outputs."""
     return json_result(registry.call(backend, "pytorch.run_lulc_inference", {
         "model_package": model_package, "input_raster": input_raster,
-        "class_output": class_output, "confidence_output": confidence_output, "device": device
+        "class_output": class_output, "confidence_output": confidence_output, "device": device,
+        "low_confidence_output": low_confidence_output, "low_confidence_threshold": low_confidence_threshold,
     }))
 
 

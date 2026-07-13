@@ -22,10 +22,13 @@ def _rasterio_info(path: Path) -> dict[str, Any]:
         values: set[int] = set()
         minimum: float | None = None
         maximum: float | None = None
+        nonfinite_count = 0
         integer = all("int" in dtype or "uint" in dtype for dtype in src.dtypes)
         for _, window in src.block_windows(1):
             data = src.read(1, window=window, masked=True)
-            finite = data.compressed()
+            raw = data.compressed()
+            finite = raw[np.isfinite(raw)]
+            nonfinite_count += int(raw.size - finite.size)
             if finite.size:
                 minimum = float(finite.min()) if minimum is None else min(minimum, float(finite.min()))
                 maximum = float(finite.max()) if maximum is None else max(maximum, float(finite.max()))
@@ -33,9 +36,12 @@ def _rasterio_info(path: Path) -> dict[str, Any]:
                     values.update(int(item) for item in np.unique(finite)[:4097])
         return {
             "path": str(path.resolve()), "inspector": "rasterio", "crs": str(src.crs) if src.crs else None,
-            "width": src.width, "height": src.height, "transform": list(src.transform)[:6],
+            "width": src.width, "height": src.height, "band_count": src.count, "transform": list(src.transform)[:6],
             "nodata": src.nodata, "dtypes": list(src.dtypes), "integer": integer,
-            "minimum": minimum, "maximum": maximum, "values": sorted(values) if len(values) <= 4096 else None,
+            "minimum": minimum, "maximum": maximum, "nonfinite_count": nonfinite_count,
+            "is_projected": bool(src.crs and src.crs.is_projected),
+            "linear_units": src.crs.linear_units if src.crs and src.crs.is_projected else None,
+            "values": sorted(values) if len(values) <= 4096 else None,
         }
 
 
@@ -53,9 +59,11 @@ def _gdal_info(path: Path) -> dict[str, Any]:
     return {
         "path": str(path.resolve()), "inspector": "gdalinfo", "crs": raw.get("coordinateSystem", {}).get("wkt"),
         "width": (raw.get("size") or [None, None])[0], "height": (raw.get("size") or [None, None])[1],
+        "band_count": len(raw.get("bands") or []),
         "transform": raw.get("geoTransform"), "nodata": band.get("noDataValue"), "dtypes": [data_type],
         "integer": any(token in data_type for token in ("int", "byte")),
-        "minimum": band.get("minimum"), "maximum": band.get("maximum"), "values": None,
+        "minimum": band.get("minimum"), "maximum": band.get("maximum"), "nonfinite_count": None,
+        "is_projected": bool(raw.get("coordinateSystem", {}).get("wkt")), "linear_units": None, "values": None,
     }
 
 
@@ -69,12 +77,19 @@ def inspect_raster(path: Path) -> dict[str, Any]:
 def _same_grid(master: dict[str, Any], item: dict[str, Any]) -> bool:
     if master.get("width") != item.get("width") or master.get("height") != item.get("height"):
         return False
-    if (master.get("crs") or "") != (item.get("crs") or ""):
-        return False
+    try:
+        from rasterio.crs import CRS  # type: ignore
+        if not CRS.from_user_input(master.get("crs")).equals(CRS.from_user_input(item.get("crs"))):
+            return False
+    except Exception:
+        if (master.get("crs") or "") != (item.get("crs") or ""):
+            return False
     left, right = master.get("transform"), item.get("transform")
-    return isinstance(left, list) and isinstance(right, list) and len(left) == len(right) and all(
-        math.isclose(float(a), float(b), rel_tol=0, abs_tol=1e-9) for a, b in zip(left, right)
-    )
+    if not isinstance(left, list) or not isinstance(right, list) or len(left) != len(right):
+        return False
+    cell = max(abs(float(left[0])), abs(float(left[4])), abs(float(right[0])), abs(float(right[4])), 1.0)
+    tolerance = max(1e-9, cell * 1e-8)
+    return all(math.isclose(float(a), float(b), rel_tol=1e-10, abs_tol=tolerance) for a, b in zip(left, right))
 
 
 def _carbon_codes(path: Path) -> set[int]:
@@ -82,7 +97,17 @@ def _carbon_codes(path: Path) -> set[int]:
         rows = list(csv.DictReader(stream))
     if not rows or "lucode" not in rows[0]:
         raise ValueError("carbon density table must contain lucode")
-    return {int(float(row["lucode"])) for row in rows if row.get("lucode", "").strip()}
+    codes: list[int] = []
+    for row in rows:
+        code = int(float(row.get("lucode", "")))
+        codes.append(code)
+        for field, value in row.items():
+            if field.startswith("c_") and (not value or not math.isfinite(float(value)) or float(value) < 0):
+                raise ValueError(f"carbon density {field} for lucode {code} must be a finite non-negative number")
+    duplicates = sorted({item for item in codes if codes.count(item) > 1})
+    if duplicates:
+        raise ValueError(f"carbon density table has duplicate lucode values: {duplicates}")
+    return set(codes)
 
 
 def validate(spec: dict[str, Any]) -> dict[str, Any]:
@@ -105,6 +130,12 @@ def validate(spec: dict[str, Any]) -> dict[str, Any]:
                 errors.append(f"{name}: CRS is missing")
             if not info.get("width") or not info.get("height"):
                 errors.append(f"{name}: raster dimensions are invalid")
+            if entry.get("require_projected_meters") and (not info.get("is_projected") or str(info.get("linear_units", "")).lower() not in {"metre", "meter", "metres", "meters", "m"}):
+                errors.append(f"{name}: projected metre CRS is required for area or volume calculations")
+            if entry.get("require_nodata") and info.get("nodata") is None:
+                errors.append(f"{name}: an explicit NoData value is required")
+            if entry.get("kind") == "continuous" and info.get("nonfinite_count"):
+                errors.append(f"{name}: continuous raster contains {info['nonfinite_count']} NaN or infinite values")
             if entry.get("kind") == "lulc":
                 if not info.get("integer"):
                     errors.append(f"{name}: LULC must use an integer pixel type")
@@ -114,6 +145,11 @@ def validate(spec: dict[str, Any]) -> dict[str, Any]:
                     unknown = sorted(set(values) - allowed)
                     if unknown:
                         errors.append(f"{name}: unrecognised LULC codes: {unknown}")
+                if info.get("nodata") in allowed:
+                    errors.append(f"{name}: NoData value conflicts with an allowed LULC code")
+            minimum_bands = entry.get("minimum_band_count")
+            if minimum_bands is not None and (not isinstance(minimum_bands, int) or int(info.get("band_count") or 0) < minimum_bands):
+                errors.append(f"{name}: raster band count is below required minimum {minimum_bands}")
             if entry.get("kind") == "subsidence_depth":
                 minimum = info.get("minimum")
                 if minimum is None:

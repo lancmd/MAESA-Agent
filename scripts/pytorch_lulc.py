@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import hashlib
 import json
 import shutil
@@ -68,6 +69,15 @@ def validate_package(package: Path, verify_weights: bool = True) -> dict[str, An
         errors.append("band_indexes must be positive 1-based integers")
     if any(not isinstance(item, (int, float)) or item <= 0 for item in std):
         errors.append("all std values must be positive numbers")
+    for field in ("sensor", "resolution_m", "value_range", "scale"):
+        if field not in input_config:
+            warnings.append(f"input.{field} is not declared; sensor compatibility cannot be fully assessed")
+    if input_config.get("resolution_m") is not None and (not isinstance(input_config["resolution_m"], (int, float)) or input_config["resolution_m"] <= 0):
+        errors.append("input.resolution_m must be a positive number when supplied")
+    value_range = input_config.get("value_range")
+    if value_range is not None and (not isinstance(value_range, list) or len(value_range) != 2 or
+                                    not all(isinstance(item, (int, float)) for item in value_range) or value_range[0] >= value_range[1]):
+        errors.append("input.value_range must be [minimum, maximum] when supplied")
     patch_size = input_config.get("patch_size")
     stride = input_config.get("stride")
     if not isinstance(patch_size, int) or patch_size < 16:
@@ -112,7 +122,8 @@ def _starts(length: int, patch: int, stride: int) -> list[int]:
 
 
 def infer(package: Path, input_raster: Path, class_output: Path, confidence_output: Path,
-          device_name: str = "auto") -> dict[str, Any]:
+          device_name: str = "auto", low_confidence_output: Path | None = None,
+          low_confidence_threshold: float | None = None) -> dict[str, Any]:
     validation = validate_package(package)
     if validation["status"] != "valid":
         raise ValueError("invalid model package: " + "; ".join(validation["errors"]))
@@ -152,12 +163,22 @@ def infer(package: Path, input_raster: Path, class_output: Path, confidence_outp
     std = np.asarray(input_config["std"], dtype="float32")[:, None, None]
     scale = float(input_config.get("scale", 1.0))
     offset = float(input_config.get("offset", 0.0))
+    threshold = low_confidence_threshold if low_confidence_threshold is not None else output_config.get("low_confidence_threshold")
+    if threshold is not None and (not isinstance(threshold, (int, float)) or not 0 < float(threshold) < 1):
+        raise ValueError("low_confidence_threshold must be between 0 and 1")
     class_output.parent.mkdir(parents=True, exist_ok=True)
     confidence_output.parent.mkdir(parents=True, exist_ok=True)
+    if low_confidence_output:
+        low_confidence_output.parent.mkdir(parents=True, exist_ok=True)
     try:
         with rasterio.open(input_raster) as source:
             if max(indexes) > source.count:
                 raise ValueError(f"input raster has {source.count} bands but model requests {max(indexes)}")
+            required_resolution = input_config.get("resolution_m")
+            if required_resolution is not None:
+                actual_resolution = (abs(float(source.transform.a)) + abs(float(source.transform.e))) / 2
+                if abs(actual_resolution - float(required_resolution)) > max(1e-6, float(required_resolution) * 0.01):
+                    raise ValueError(f"input resolution {actual_resolution:g} differs from model contract {float(required_resolution):g} m")
             height, width = source.height, source.width
             probability_sum = np.memmap(cache / "probabilities.dat", mode="w+", dtype="float32",
                                         shape=(len(class_ids), height, width))
@@ -198,7 +219,12 @@ def infer(package: Path, input_raster: Path, class_output: Path, confidence_outp
             class_profile.update(count=1, dtype=class_dtype, nodata=output_config.get("class_nodata", 0), compress="deflate")
             confidence_profile = source.profile.copy()
             confidence_profile.update(count=1, dtype="float32", nodata=output_config.get("confidence_nodata", -9999.0), compress="deflate")
-            with rasterio.open(class_output, "w", **class_profile) as class_sink, rasterio.open(confidence_output, "w", **confidence_profile) as confidence_sink:
+            low_profile = source.profile.copy()
+            low_profile.update(count=1, dtype="uint8", nodata=255, compress="deflate")
+            with ExitStack() as stack:
+                class_sink = stack.enter_context(rasterio.open(class_output, "w", **class_profile))
+                confidence_sink = stack.enter_context(rasterio.open(confidence_output, "w", **confidence_profile))
+                low_sink = stack.enter_context(rasterio.open(low_confidence_output, "w", **low_profile)) if low_confidence_output else None
                 for _, window in class_sink.block_windows(1):
                     row = int(window.row_off); col = int(window.col_off)
                     h = int(window.height); w = int(window.width)
@@ -211,9 +237,14 @@ def infer(package: Path, input_raster: Path, class_output: Path, confidence_outp
                     confidence[valid] = np.max(probabilities[:, valid], axis=0)
                     class_sink.write(labels, 1, window=window)
                     confidence_sink.write(confidence, 1, window=window)
+                    if low_sink:
+                        low = np.full((h, w), 255, dtype="uint8")
+                        low[valid] = (confidence[valid] < float(threshold)).astype("uint8") if threshold is not None else 0
+                        low_sink.write(low, 1, window=window)
         report = {"status": "completed", "model_id": config["model_id"], "device": device,
                   "input_raster": str(input_raster.resolve()), "class_output": str(class_output.resolve()),
-                  "confidence_output": str(confidence_output.resolve()), "validation_status": "pending_validation"}
+                  "confidence_output": str(confidence_output.resolve()), "low_confidence_output": str(low_confidence_output.resolve()) if low_confidence_output else None,
+                  "low_confidence_threshold": threshold, "validation_status": "pending_validation"}
         class_output.with_suffix(class_output.suffix + ".inference.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return report
@@ -232,6 +263,8 @@ def main() -> int:
     run.add_argument("--input-raster", required=True, type=Path)
     run.add_argument("--class-output", required=True, type=Path)
     run.add_argument("--confidence-output", required=True, type=Path)
+    run.add_argument("--low-confidence-output", type=Path)
+    run.add_argument("--low-confidence-threshold", type=float)
     run.add_argument("--device", default="auto")
     args = parser.parse_args()
     if args.command == "validate-model":
@@ -239,7 +272,8 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["status"] == "valid" else 1
     result = infer(args.model_package.resolve(), args.input_raster.resolve(), args.class_output.resolve(),
-                   args.confidence_output.resolve(), args.device)
+                   args.confidence_output.resolve(), args.device,
+                   args.low_confidence_output.resolve() if args.low_confidence_output else None, args.low_confidence_threshold)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

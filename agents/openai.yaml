@@ -10,4 +10,4 @@ dependencies:
       transport: "streamable_http"
       url: "http://127.0.0.1:8765/mcp"
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

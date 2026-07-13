@@ -62,6 +62,8 @@ workspace/outputs/plus/RE/PLUS_RE.tif
 
 该桥接器会无参数启动本机 GUI，并在每个情景目录生成独立的交接清单、请求包和状态记录；它不声称已完成预测。按照交接清单在 GUI 中导出结果到上述固定位置后，再次运行同一项目，工作流会自动检查 CRS、网格、整数编码、类别代码和碳密度覆盖，并接管后续 InVEST 与生态服务阶段。若未来获得厂商提供的 CLI/API，可将 `plus_bridge_command` 改为对应的本地命令桥接器。
 
+桥接器读取 `plus_v141_version` 或 `plus_v141_sha256`，不依赖 EXE 文件名；它会复用仍存活的 GUI PID，避免重复启动窗口。`prepare_all_plus_scenarios` 可先生成 ND、UD、EP、RE 四个交接包，再用一个 PLUS 会话依次导出结果。接管前会检查 TIFF 签名及最小稳定时间。
+
 RE 情景只使用统一的 `resource_extraction` 契约：`core_driver_input`、`core_driver_unit: "m"`、`core_driver_convention: "positive_down"`。项目模板可用 `inputs.subsidence_depth_raster` 作为简写，桥接器实际收到的是已解析的对齐 TIFF；`w.dat` 只是外部沉陷计算的来源记录。
 
 ## 情景闭环与验收
@@ -82,6 +84,12 @@ PLUS_ND/UD/EP/RE → InVEST Carbon_ND/UD/EP/RE
 - `validation_summary.json`：阶段状态与验证文件清单。
 
 独立验证仍然有其边界：PLUS 的 FoM 需要回算参考图和多个种子结果；InVEST 一致性需要独立运行结果；地图的颜色、标签和遮挡需要查看导出的 PDF/PNG。
+
+## 多模型生态服务与运行边界
+
+`invest.models` 可按情景克隆 Carbon、Annual Water Yield、Habitat Quality、SDR 和 NDR 的 datastack；非 Carbon 模型需要提供当前 InVEST 版本的 `datastack_template` 与 `expected_outputs`。生态服务输入可设置 `analysis.grid_cell_pixels`，把服务栅格汇总为规则网格单元；未设置时，结果明确标为情景总量，不应用于空间异质性或 GeoDetector 推断。
+
+Min-Max 可选 `within_project`（项目内相对比较）或 `fixed_reference`（所有指标设定固定 min/max，适合跨年份、跨矿区比较）；输出 metadata 会记录可比性和被截断值。单项 MCP 工具默认只允许读取 Skill 根目录、只允许写入 `outputs/`；实际项目数据在仓库外时，先设置 `MINING_GIS_INPUT_ROOTS` 和 `MINING_GIS_OUTPUT_ROOT`。`submit_local_project`、`get_job_status`、`cancel_job` 和 `resume_job` 提供本地后台任务管理。
 
 ## 示例与目录
 

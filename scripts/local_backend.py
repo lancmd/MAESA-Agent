@@ -96,8 +96,8 @@ def handle_invest(envelope: dict[str, Any]) -> dict[str, Any]:
         return response(envelope, "failed", error="InVEST backend is unavailable")
     operation = envelope.get("operation")
     model = "carbon" if operation == "invest.run_carbon" else params.get("model")
-    if model not in {"carbon", "annual_water_yield", "habitat_quality"}:
-        return response(envelope, "failed", error="supported InVEST models are carbon, annual_water_yield, habitat_quality")
+    if model not in {"carbon", "annual_water_yield", "habitat_quality", "sdr", "ndr"}:
+        return response(envelope, "failed", error="supported InVEST models are carbon, annual_water_yield, habitat_quality, sdr, ndr")
     workspace = mcp_workspace(params["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
     code, log = run([executable, "run", model, "-l", "-d",

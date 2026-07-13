@@ -44,9 +44,11 @@ def main() -> int:
                            Path(params["input_raster"]).expanduser().resolve(),
                            Path(params["class_output"]).expanduser().resolve(),
                            Path(params["confidence_output"]).expanduser().resolve(),
-                           str(params.get("device", "auto")))
+                           str(params.get("device", "auto")),
+                           Path(params["low_confidence_output"]).expanduser().resolve() if params.get("low_confidence_output") else None,
+                           params.get("low_confidence_threshold"))
             result = response(envelope, "completed", result=report,
-                              outputs=[report["class_output"], report["confidence_output"]])
+                              outputs=[item for item in [report["class_output"], report["confidence_output"], report.get("low_confidence_output")] if item])
         else:
             result = response(envelope, "failed", error=f"unsupported PyTorch operation: {operation}")
     except Exception as error:

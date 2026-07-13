@@ -33,6 +33,8 @@ with tempfile.TemporaryDirectory() as temporary:
     }
     env = os.environ.copy()
     env["PLUS_V141_EXECUTABLE"] = str(executable)
+    env["PLUS_V141_VERSION"] = "PLUS V1.4.1"
+    env["MINING_GIS_LOCAL_PATHS"] = str(root / "no-local-paths.json")
     env["MINING_PLUS_OUTPUT_ROOT"] = str(root)
     process = subprocess.run([sys.executable, str(BRIDGE)], input=json.dumps(envelope), text=True,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, check=False)
@@ -47,6 +49,7 @@ with tempfile.TemporaryDirectory() as temporary:
     assert metadata["launch_command"] == [str(executable)]
     assert metadata["launch_arguments"] == []
     assert metadata["expected_output"] == str(expected)
+    assert metadata["executable_identity"]["configured_version"] == "PLUS V1.4.1"
     assert state_payload["status"] == "prepared"
 
 print('{"status":"completed","checks":["V1.4.1 GUI hand-off","no invented CLI arguments","scenario manifest"]}')

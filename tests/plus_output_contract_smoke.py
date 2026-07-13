@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import os
+import time
 from pathlib import Path
 import sys
 
@@ -32,6 +33,8 @@ with tempfile.TemporaryDirectory() as temporary:
     assert Path(nd_pack) != Path(re_pack)
     output = root / "ND" / "PLUS_ND.tif"
     output.write_bytes(b"local plus output")
+    output.write_bytes(b"II*\x00local plus output")
+    os.utime(output, (time.time() - 10, time.time() - 10))
     result = adopt_existing_output(nd)
     assert result and result["status"] == "completed" and result["outputs"] == [str(output)]
     bridge_result = normalize_bridge_result(nd, {"status": "completed", "outputs": [str(output)]})

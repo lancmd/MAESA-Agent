@@ -15,6 +15,8 @@ from project_workflow import compile_workflow  # noqa: E402
 from analysis_validation import validate_results  # noqa: E402
 from lulc_accuracy import evaluate as evaluate_lulc  # noqa: E402
 from workflow_agent import JobRunner  # noqa: E402
+from prepare_plus_scenarios import prepare as prepare_plus_scenarios  # noqa: E402
+from job_manager import cancel as cancel_job, outputs as job_outputs, status as job_status, submit as submit_job  # noqa: E402
 
 
 def main() -> int:
@@ -22,6 +24,7 @@ def main() -> int:
     if envelope.get("operation") == "system.capabilities":
         result = {"status": "completed", "result": {"backend": "project", "mode": "local-command", "operations": [
             "system.capabilities", "project.validate", "project.compile_workflow", "project.run_workflow",
+            "project.prepare_plus_scenarios", "project.submit_workflow", "system.job_status", "system.cancel_job", "system.list_outputs",
             "analysis.validate_results", "analysis.lulc_accuracy", "analysis.plus_validation", "analysis.invest_consistency",
         ]}}
     elif envelope.get("operation") == "project.validate":
@@ -45,6 +48,24 @@ def main() -> int:
         status = "failed" if return_code else "pending_validation" if "pending_validation" in statuses else "prepared" if "prepared" in statuses else "waiting_interactive" if "waiting_interactive" in statuses else "completed"
         result = {"status": status, "result": {"compiled": compiled, "state": str(runner.state_path), "stage_statuses": state.get("stages", {})},
                   "outputs": [compiled["workflow_job"], str(runner.state_path)]}
+    elif envelope.get("operation") == "project.prepare_plus_scenarios":
+        params = envelope["parameters"]
+        output = params.get("output_job")
+        report = prepare_plus_scenarios(Path(params["project_file"]), Path(output) if output else None)
+        result = {"status": "completed", "result": report, "outputs": [report["workflow_job"], report["manifest"]]}
+    elif envelope.get("operation") == "project.submit_workflow":
+        params = envelope["parameters"]
+        output = params.get("output_job")
+        compiled = compile_workflow(Path(params["project_file"]), Path(output) if output else None)
+        record = submit_job(Path(compiled["workflow_job"]), bool(params.get("dry_run")), bool(params.get("continue_on_error")),
+                            bool(params.get("confirm_overwrite")))
+        result = {"status": "accepted", "result": record, "outputs": [record["log"]]}
+    elif envelope.get("operation") == "system.job_status":
+        result = {"status": "completed", "result": job_status(envelope["parameters"]["job_id"])}
+    elif envelope.get("operation") == "system.cancel_job":
+        result = {"status": "cancelled", "result": cancel_job(envelope["parameters"]["job_id"])}
+    elif envelope.get("operation") == "system.list_outputs":
+        result = {"status": "completed", "result": job_outputs(envelope["parameters"]["job_id"])}
     elif envelope.get("operation") == "analysis.validate_results":
         params = envelope["parameters"]
         output = params.get("output_report")

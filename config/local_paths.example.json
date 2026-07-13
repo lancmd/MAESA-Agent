@@ -5,6 +5,8 @@
   "idl": "${IDL_EXE}",
   "plus": "${PLUS_EXE}",
   "plus_v141_executable": "${PLUS_V141_EXECUTABLE}",
+  "plus_v141_version": "PLUS V1.4.1",
+  "plus_v141_sha256": "",
   "gdalinfo": "${GDALINFO}",
   "plus_bridge_command": ["{python}", "{skill_root}/scripts/plus_v141_bridge.py"]
 }

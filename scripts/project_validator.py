@@ -18,6 +18,7 @@ VALID_ENGINES = {"envi", "pytorch", "provided_lulc"}
 VALID_ECOSYSTEM_METHODS = {"minmax", "ahp"}
 VALID_PLUS_SCENARIOS = {"ND", "UD", "EP", "RE"}
 VALID_SUBSIDENCE_WATER_MODES = {"classify_only", "estimate_volume", "composite_subsidence_water_carbon"}
+VALID_INVEST_MODELS = {"carbon", "annual_water_yield", "habitat_quality", "sediment_delivery_ratio", "nutrient_delivery_ratio"}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -127,6 +128,11 @@ def validate(project_path: Path) -> dict[str, Any]:
             required_path("lulc_baseline", inputs.get("lulc_baseline"), base, input_roots, errors)
         if classification.get("scheme") not in {"standard_6class", "high_water_coal_7class"}:
             errors.append("classification.scheme must be standard_6class or high_water_coal_7class")
+        threshold = classification.get("low_confidence_threshold")
+        if threshold is not None and (not isinstance(threshold, (int, float)) or not 0 < threshold < 1):
+            errors.append("classification.low_confidence_threshold must be between 0 and 1")
+        if classification.get("output_low_confidence") and threshold is None:
+            errors.append("classification.output_low_confidence requires low_confidence_threshold")
         accuracy = classification.get("accuracy", {})
         if accuracy and accuracy.get("enabled"):
             required_path("classification.accuracy.validation_samples", accuracy.get("validation_samples"), base, input_roots, errors)
@@ -163,6 +169,11 @@ def validate(project_path: Path) -> dict[str, Any]:
                 errors.append("PLUS scenarios must not contain duplicates")
         if plus.get("target_year", 0) <= plus.get("baseline_year", 0):
             errors.append("PLUS target_year must be later than baseline_year")
+        for field in ("transition_matrix", "constraint_raster"):
+            if plus.get(field):
+                optional_path(f"plus.{field}", plus.get(field), base, input_roots, errors)
+        if plus.get("random_seed") is not None and not isinstance(plus.get("random_seed"), int):
+            errors.append("PLUS random_seed must be an integer when supplied")
         if "RE" in scenario_codes:
             resource = plus.get("resource_extraction", {})
             errors.extend(re_contract_errors(resource, project_shorthand_allowed=True))
@@ -181,8 +192,34 @@ def validate(project_path: Path) -> dict[str, Any]:
                     warnings.append("RE uses the aligned positive subsidence-depth raster; w.dat remains the external source record.")
 
     if invest.get("enabled"):
-        carbon = required_path("carbon_density", inputs.get("carbon_density"), base, input_roots, errors)
-        validate_carbon_table(carbon, errors)
+        models = invest.get("models")
+        if models is not None and (not isinstance(models, dict) or not models):
+            errors.append("invest.models must be a non-empty object when supplied")
+            models = {}
+        active_models = models if isinstance(models, dict) and models else {"carbon": {"enabled": True, "provided_datastack": invest.get("datastack")}}
+        for name, config in active_models.items():
+            if name not in VALID_INVEST_MODELS:
+                errors.append(f"unsupported InVEST model: {name}")
+                continue
+            if not isinstance(config, dict):
+                errors.append(f"invest.models.{name} must be an object")
+                continue
+            if not config.get("enabled"):
+                continue
+            template = config.get("datastack_template") or config.get("provided_datastack")
+            if template:
+                required_path(f"invest.models.{name} datastack", template, base, input_roots, errors)
+            elif name != "carbon":
+                errors.append(f"invest.models.{name} requires datastack_template or provided_datastack")
+            outputs = config.get("expected_outputs")
+            if outputs is not None and (not isinstance(outputs, list) or any(not isinstance(item, str) or not item for item in outputs)):
+                errors.append(f"invest.models.{name}.expected_outputs must be a list of non-empty paths")
+            if name != "carbon" and (not isinstance(outputs, list) or not outputs):
+                errors.append(f"invest.models.{name}.expected_outputs is required to verify scenario outputs")
+        carbon_config = active_models.get("carbon", {}) if isinstance(active_models.get("carbon", {}), dict) else {}
+        if carbon_config.get("enabled") and not (carbon_config.get("datastack_template") or carbon_config.get("provided_datastack")):
+            carbon = required_path("carbon_density", inputs.get("carbon_density"), base, input_roots, errors)
+            validate_carbon_table(carbon, errors)
         if not plus.get("enabled") and not classification.get("enabled"):
             required_path("lulc_baseline", inputs.get("lulc_baseline"), base, input_roots, errors)
 
@@ -235,6 +272,10 @@ def validate(project_path: Path) -> dict[str, Any]:
         if plus.get("enabled") and not invest.get("enabled"):
             errors.append("ecosystem scenario comparison after PLUS requires invest.enabled so carbon can be generated per scenario")
         analysis = ecosystem.get("analysis", {})
+        if isinstance(analysis, dict) and analysis.get("grid_cell_pixels") is not None:
+            value = analysis.get("grid_cell_pixels")
+            if not isinstance(value, int) or value < 1:
+                errors.append("ecosystem_service.analysis.grid_cell_pixels must be a positive integer")
         if isinstance(analysis, dict) and analysis.get("geodetector_factor_fields"):
             required_path("ecosystem geodetector_samples", analysis.get("geodetector_samples"), base, input_roots, errors)
 
@@ -247,11 +288,23 @@ def validate(project_path: Path) -> dict[str, Any]:
         layers = gis_outputs.get("layers", [])
         if not isinstance(layers, list) or not layers:
             errors.append("gis_outputs.layers must contain the result layers to add to the layout")
+        else:
+            for index, layer in enumerate(layers):
+                if not isinstance(layer, dict):
+                    errors.append(f"gis_outputs.layers[{index}] must be an object")
+                    continue
+                required_path(f"gis_outputs.layers[{index}].path", layer.get("path"), base, input_roots, errors)
+                if layer.get("symbology_layer"):
+                    optional_path(f"gis_outputs.layers[{index}].symbology_layer", layer.get("symbology_layer"), base, input_roots, errors)
 
     if validation.get("enabled"):
-        required_path("validation.evidence_file", validation.get("evidence_file"), base, input_roots, errors)
+        if validation.get("evidence_file"):
+            optional_path("validation.evidence_file", validation.get("evidence_file"), base, input_roots, errors)
         if not validation.get("output_report"):
             errors.append("validation.output_report is required when validation is enabled")
+        sections = validation.get("required_sections")
+        if sections is not None and (not isinstance(sections, list) or not sections or any(item not in {"lulc", "plus", "invest", "ecosystem", "map"} for item in sections)):
+            errors.append("validation.required_sections must be a non-empty list of known sections")
 
     if not any(item.get("enabled") for item in (classification, plus, invest, subsidence, ecosystem, gis_outputs, validation)):
         warnings.append("No analysis module is enabled; configure one module before running the project.")

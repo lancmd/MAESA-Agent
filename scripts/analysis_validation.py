@@ -12,6 +12,7 @@ from typing import Any
 
 
 METRICS = ("oa", "precision", "recall", "f1", "iou")
+KNOWN_SECTIONS = ("lulc", "plus", "invest", "ecosystem", "map")
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -173,16 +174,21 @@ def validate_results(validation_file: Path, output_report: Path | None = None) -
     reports = payload.get("reports")
     if not isinstance(reports, dict):
         raise ValueError("analysis validation reports must be an object")
-    sections = {
+    required_sections = payload.get("required_sections", list(KNOWN_SECTIONS))
+    if not isinstance(required_sections, list) or not required_sections or any(item not in KNOWN_SECTIONS for item in required_sections):
+        raise ValueError("required_sections must be a non-empty subset of " + ", ".join(KNOWN_SECTIONS))
+    all_sections = {
         "lulc": validate_lulc(reports.get("lulc", {})),
         "plus": validate_plus(reports.get("plus", {})),
         "invest": validate_invest(reports.get("invest", {})),
         "ecosystem": validate_ecosystem(reports.get("ecosystem", {})),
         "map": validate_map(reports.get("map", {})),
     }
+    sections = {name: all_sections[name] for name in required_sections}
     states = {item["status"] for item in sections.values()}
     status = "failed" if "failed" in states else "pending_validation" if "pending_validation" in states else "completed"
-    result = {"status": status, "sections": sections, "source": str(validation_file.expanduser().resolve())}
+    result = {"status": status, "required_sections": required_sections, "sections": sections,
+              "source": str(validation_file.expanduser().resolve())}
     output = output_report or validation_file.with_name("analysis_validation_report.json")
     result["output"] = str(output.expanduser().resolve())
     write_json(Path(result["output"]), result)

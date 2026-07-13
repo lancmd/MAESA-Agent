@@ -1,0 +1,26 @@
+"""Pytest entry points for fast local/CI contract coverage."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("script", [
+    "project_conditional_inputs_smoke.py", "project_workflow_smoke.py", "plus_re_contract_smoke.py",
+    "plus_output_contract_smoke.py", "plus_v141_bridge_smoke.py", "plus_v141_session_reuse_smoke.py", "plus_chain_compile_smoke.py",
+    "prepare_plus_scenarios_smoke.py",
+    "invest_multimodel_compile_smoke.py",
+    "ecosystem_service_smoke.py", "ecosystem_sensitivity_smoke.py", "analysis_validation_smoke.py",
+    "workflow_manifest_safety_smoke.py", "job_manager_smoke.py", "local_only_registry_smoke.py", "status_vocabulary_smoke.py",
+])
+def test_contract_smokes(script: str) -> None:
+    process = subprocess.run([sys.executable, str(ROOT / "tests" / script)], cwd=ROOT,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+    assert process.returncode == 0, process.stdout

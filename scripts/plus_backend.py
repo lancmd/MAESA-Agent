@@ -13,6 +13,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,15 @@ def adopt_existing_output(envelope: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if expected.suffix.lower() not in {".tif", ".tiff"}:
         return response(envelope, "failed", error=f"PLUS {scenario} output is not a GeoTIFF: {expected}")
+    minimum_age = float(os.getenv("MINING_PLUS_OUTPUT_STABLE_SECONDS", "5"))
+    stat = expected.stat()
+    if stat.st_size <= 8 or time.time() - stat.st_mtime < minimum_age:
+        return response(envelope, "waiting_interactive", outputs=[str(expected)],
+                        message=f"PLUS {scenario} GeoTIFF is still being written; wait at least {minimum_age:g} seconds before adoption")
+    with expected.open("rb") as stream:
+        signature = stream.read(4)
+    if signature not in {b"II*\x00", b"MM\x00*"}:
+        return response(envelope, "failed", error=f"PLUS {scenario} output is not a readable TIFF signature: {expected}")
     state = workspace / "plus_execution_state.json"
     workspace.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps({"scenario": scenario, "status": "completed", "adopted": True,

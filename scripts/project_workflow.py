@@ -15,6 +15,18 @@ from project_validator import validate
 
 
 ROOT = Path(__file__).resolve().parents[1]
+INVEST_MODELS = {
+    "carbon": {"cli": "carbon", "lulc_argument": "lulc_cur_path", "default_output": "tot_c_cur.tif",
+               "service_field": "carbon_storage_t_c"},
+    "annual_water_yield": {"cli": "annual_water_yield", "lulc_argument": "lulc_path", "default_output": None,
+                            "service_field": "water_yield"},
+    "habitat_quality": {"cli": "habitat_quality", "lulc_argument": "lulc_cur_path", "default_output": None,
+                        "service_field": "habitat_quality"},
+    "sediment_delivery_ratio": {"cli": "sdr", "lulc_argument": "lulc_path", "default_output": None,
+                                  "service_field": "sediment_retention"},
+    "nutrient_delivery_ratio": {"cli": "ndr", "lulc_argument": "lulc_path", "default_output": None,
+                                  "service_field": "nutrient_retention"},
+}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -35,11 +47,48 @@ def output_path(value: str, workspace: Path) -> str:
     return str(resolve_output(value, workspace))
 
 
+def map_layer_definition(value: dict[str, Any], base: Path) -> dict[str, Any]:
+    """Resolve map resource paths relative to project.json before ArcGIS changes cwd."""
+    result = dict(value)
+    for key in ("path", "symbology_layer"):
+        if result.get(key):
+            result[key] = source_path(result[key], base)
+    return result
+
+
 def carbon_datastack(lulc: str, carbon_table: str, output: Path) -> str:
     write_json(output, {"args": {"calc_sequestration": False, "carbon_pools_path": carbon_table,
         "do_redd": False, "do_valuation": False, "lulc_cur_path": lulc, "n_workers": -1,
         "results_suffix": ""}, "model_name": "natcap.invest.carbon"})
     return str(output)
+
+
+def enabled_invest_models(invest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    configured = invest.get("models")
+    if not isinstance(configured, dict) or not configured:
+        return {"carbon": {"enabled": True, "provided_datastack": invest.get("datastack")}}
+    return {name: value for name, value in configured.items()
+            if name in INVEST_MODELS and isinstance(value, dict) and value.get("enabled")}
+
+
+def scenario_datastack(model: str, config: dict[str, Any], lulc: str, carbon_table: str | None,
+                       base: Path, output: Path) -> str:
+    """Clone a model template once per scenario and replace only the LULC argument."""
+    template_value = config.get("datastack_template") or config.get("provided_datastack")
+    if template_value:
+        template = Path(source_path(str(template_value), base) or "")
+        payload = read_json(template)
+        args = payload.setdefault("args", {})
+        if not isinstance(args, dict):
+            raise ValueError(f"InVEST {model} datastack args must be an object")
+        args[config.get("lulc_argument", INVEST_MODELS[model]["lulc_argument"])] = lulc
+        write_json(output, payload)
+        return str(output)
+    if model != "carbon":
+        raise ValueError(f"InVEST {model} requires datastack_template or provided_datastack")
+    if not carbon_table:
+        raise ValueError("generated InVEST carbon datastack requires inputs.carbon_density")
+    return carbon_datastack(lulc, carbon_table, output)
 
 
 def allowed_codes(scheme: str) -> list[int]:
@@ -71,12 +120,14 @@ def add_preflight(stages: list[dict[str, Any]], workspace: Path, inputs: dict[st
                 datasets.append({"name": f"driver_{name}", "path": source_path(value, base), "kind": "continuous", "must_align": True})
         if inputs.get("subsidence_depth_raster"):
             datasets.append({"name": "subsidence_depth", "path": source_path(inputs["subsidence_depth_raster"], base),
-                             "kind": "subsidence_depth", "must_align": True})
+                             "kind": "subsidence_depth", "must_align": True,
+                             "require_projected_meters": bool(subsidence.get("enabled"))})
     if subsidence.get("enabled") and subsidence.get("mode") in {"estimate_volume", "composite_subsidence_water_carbon"}:
         for name, value, kind in (("dem", inputs.get("dem"), "continuous"),
                                   ("subsidence_depth", inputs.get("subsidence_depth_raster"), "subsidence_depth")):
             if value and not any(item["name"] == name for item in datasets):
-                datasets.append({"name": name, "path": source_path(value, base), "kind": kind, "must_align": bool(master)})
+                datasets.append({"name": name, "path": source_path(value, base), "kind": kind, "must_align": bool(master),
+                                 "require_projected_meters": kind in {"continuous", "subsidence_depth"}})
     if not datasets:
         return None
     vertical_datum: dict[str, Any] = {}
@@ -139,12 +190,16 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
         lulc = output_path(classification.get("output_lulc", "outputs/lulc.tif"), workspace)
         if classification["engine"] == "pytorch":
             confidence = output_path(classification.get("output_confidence", "outputs/lulc_confidence.tif"), workspace)
+            low_confidence = output_path(classification["output_low_confidence"], workspace) if classification.get("output_low_confidence") else None
+            threshold = classification.get("low_confidence_threshold")
             stages.append({"id": "classification_pytorch", "adapter": "command", "enabled": True,
                 "command": [sys.executable, str(ROOT / "scripts" / "pytorch_lulc.py"), "infer", "--model-package",
                             source_path(inputs["model_package"], base), "--input-raster", source_path(inputs["imagery"][0], base),
-                            "--class-output", lulc, "--confidence-output", confidence],
+                            "--class-output", lulc, "--confidence-output", confidence] +
+                           (["--low-confidence-output", low_confidence] if low_confidence else []) +
+                           (["--low-confidence-threshold", str(threshold)] if threshold is not None else []),
                 "inputs": [source_path(inputs["model_package"], base), source_path(inputs["imagery"][0], base)],
-                "outputs": [lulc, confidence], "depends_on": dependencies.copy()})
+                "outputs": [item for item in [lulc, confidence, low_confidence] if item], "depends_on": dependencies.copy()})
             classify_id = "classification_pytorch"
         elif classification["engine"] == "envi":
             method = classification.get("envi_method", "maximum_likelihood")
@@ -222,7 +277,14 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             stage_id, scenario_dir = f"plus_{scenario}", plus_root / scenario
             expected = expected_plus_raster(scenario_dir, scenario)
             parameters: dict[str, Any] = {"historical_lulc": historical, "driver_factors": driver_factors,
-                "output_directory": str(scenario_dir), "expected_output": str(expected)}
+                "output_directory": str(scenario_dir), "expected_output": str(expected),
+                "plus_settings": {
+                    "baseline_year": plus.get("baseline_year"), "target_year": plus.get("target_year"),
+                    "random_seed": plus.get("random_seed"), "neighborhood_weights": plus.get("neighborhood_weights"),
+                    "transition_matrix": source_path(plus.get("transition_matrix"), base),
+                    "constraint_raster": source_path(plus.get("constraint_raster"), base),
+                    "land_demand": plus.get("land_demand", {}).get(scenario, plus.get("land_demand", {})),
+                }}
             if scenario == "RE":
                 parameters["resource_extraction"] = canonical_re_contract(
                     plus["resource_extraction"], source_path(inputs["subsidence_depth_raster"], base),
@@ -241,6 +303,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             plus_validation_dependencies.append(validation_id)
 
     invest_outputs: dict[str, str] = {}
+    invest_service_outputs: dict[str, dict[str, str]] = {}
     invest_dependencies: list[str] = []
     if invest.get("enabled"):
         if plus_outputs:
@@ -251,17 +314,29 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                 raise ValueError("InVEST needs a classified or provided LULC raster")
             lulc_sources = {"baseline": lulc}
             dependency_by_scenario = {"baseline": lulc_dependency}
-        for scenario, source_lulc in lulc_sources.items():
-            suffix = "" if scenario == "baseline" else f"_{scenario}"
-            stage_id = f"invest_carbon{suffix}"
-            datastack = source_path(invest.get("datastack"), base) if scenario == "baseline" and invest.get("datastack") else carbon_datastack(
-                source_lulc, carbon or "", workspace / "generated" / f"{stage_id}_datastack.json")
-            model_workspace = Path(output_path(invest.get("output_workspace", "outputs/invest"), workspace)) / scenario
-            output = model_workspace / "tot_c_cur.tif"
-            stages.append({"id": stage_id, "adapter": "invest", "enabled": True, "model": "carbon", "datastack": datastack,
-                           "model_workspace": str(model_workspace), "inputs": [datastack, source_lulc, carbon],
-                           "outputs": [str(output)], "depends_on": dependency_by_scenario[scenario]})
-            invest_outputs[scenario] = str(output); invest_dependencies.append(stage_id)
+        for model, model_config in enabled_invest_models(invest).items():
+            for scenario, source_lulc in lulc_sources.items():
+                suffix = "" if scenario == "baseline" else f"_{scenario}"
+                stage_id = f"invest_{model}{suffix}"
+                datastack = scenario_datastack(model, model_config, source_lulc, carbon, base,
+                                               workspace / "generated" / f"{stage_id}_datastack.json")
+                model_workspace = Path(output_path(invest.get("output_workspace", "outputs/invest"), workspace)) / model / scenario
+                configured_outputs = model_config.get("expected_outputs")
+                if configured_outputs is None:
+                    configured_outputs = [INVEST_MODELS[model]["default_output"]] if INVEST_MODELS[model]["default_output"] else []
+                if not isinstance(configured_outputs, list) or any(not isinstance(item, str) or not item for item in configured_outputs):
+                    raise ValueError(f"invest.models.{model}.expected_outputs must be a list of non-empty relative paths")
+                outputs = [str((model_workspace / item).resolve()) for item in configured_outputs]
+                stages.append({"id": stage_id, "adapter": "invest", "enabled": True, "model": INVEST_MODELS[model]["cli"],
+                               "datastack": datastack, "model_workspace": str(model_workspace),
+                               "inputs": [datastack, source_lulc] + ([carbon] if carbon else []),
+                               "outputs": outputs, "depends_on": dependency_by_scenario[scenario]})
+                invest_dependencies.append(stage_id)
+                if model == "carbon" and outputs:
+                    invest_outputs[scenario] = outputs[0]
+                if outputs:
+                    service_field = str(model_config.get("service_field", INVEST_MODELS[model]["service_field"]))
+                    invest_service_outputs.setdefault(scenario, {})[service_field] = outputs[0]
 
     ecosystem_dependencies: list[str] = []
     if ecosystem.get("enabled"):
@@ -275,9 +350,12 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                        "--id-field", config_payload.get("id_field", "unit_id")]
             if ecosystem.get("criteria_table"):
                 command.extend(["--supplemental", source_path(ecosystem["criteria_table"], base)])
-            for scenario in ("ND", "UD", "EP", "RE"):
-                if scenario in invest_outputs:
-                    command.extend(["--carbon-raster", f"{scenario}={invest_outputs[scenario]}"])
+            grid_cell_pixels = ecosystem.get("analysis", {}).get("grid_cell_pixels")
+            if grid_cell_pixels is not None:
+                command.extend(["--grid-cell-pixels", str(grid_cell_pixels)])
+            for scenario, service_outputs in invest_service_outputs.items():
+                for field, raster in service_outputs.items():
+                    command.extend(["--service-raster", f"{scenario}={field}={raster}"])
             stages.append({"id": "ecosystem_scenario_inputs", "adapter": "command", "enabled": True, "command": command,
                            "inputs": list(invest_outputs.values()) + ([source_path(ecosystem["criteria_table"], base)] if ecosystem.get("criteria_table") else []),
                            "outputs": [criteria, criteria + ".metadata.json"], "depends_on": invest_dependencies.copy()})
@@ -322,24 +400,51 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
 
     completed = [stage["id"] for stage in stages if stage.get("enabled")]
     if gis_outputs.get("enabled"):
+        map_layers = [map_layer_definition(item, base) for item in gis_outputs.get("layers", [])]
+        map_validation = str(workspace / "validation" / "map_layout.json")
+        map_aprx = output_path(gis_outputs.get("aprx_output", "outputs/maps/composed_project.aprx"), workspace)
+        map_outputs = [map_aprx, map_validation]
+        if gis_outputs.get("pdf"):
+            map_outputs.append(output_path(gis_outputs["pdf"], workspace))
+        if gis_outputs.get("png"):
+            map_outputs.append(output_path(gis_outputs["png"], workspace))
+        map_inputs = [source_path(gis_outputs["aprx"], base)]
+        for layer in map_layers:
+            map_inputs.append(layer["path"])
+            if layer.get("symbology_layer"):
+                map_inputs.append(layer["symbology_layer"])
         spec = {"environment": {"overwriteOutput": False}, "operations": [{"id": "compose_final_layout", "type": "compose_layout",
             "aprx": source_path(gis_outputs["aprx"], base), "layout_name": gis_outputs["layout_name"], "map_name": gis_outputs.get("map_name"),
             "map_frame_name": gis_outputs.get("map_frame_name"), "title_element_name": gis_outputs.get("title_element_name"),
-            "extent_from_layer": gis_outputs.get("extent_from_layer"), "aprx_output": output_path(gis_outputs.get("aprx_output", "outputs/maps/composed_project.aprx"), workspace),
-            "layers": gis_outputs.get("layers", []), "title_text": gis_outputs.get("title_text"), "legend_name": gis_outputs.get("legend_name"),
+            "extent_from_layer": gis_outputs.get("extent_from_layer"), "aprx_output": map_aprx,
+            "layers": map_layers, "title_text": gis_outputs.get("title_text"), "legend_name": gis_outputs.get("legend_name"),
             "pdf": output_path(gis_outputs["pdf"], workspace) if gis_outputs.get("pdf") else None,
             "png": output_path(gis_outputs["png"], workspace) if gis_outputs.get("png") else None, "resolution": gis_outputs.get("resolution", 300),
-            "validation_output": str(workspace / "validation" / "map_layout.json")}]}
+            "validation_output": map_validation}]}
         spec_path = workspace / "generated" / "compose_layout.json"; write_json(spec_path, spec)
         stages.append({"id": "map_layout", "adapter": "arcgis", "enabled": True, "spec": str(spec_path),
-                       "inputs": [source_path(gis_outputs["aprx"], base)], "outputs": [str(workspace / "validation" / "map_layout.json")],
+                       "inputs": map_inputs, "outputs": map_outputs,
                        "depends_on": completed.copy()})
         completed.append("map_layout")
     if validation_config.get("enabled"):
-        evidence, output = source_path(validation_config["evidence_file"], base), output_path(validation_config["output_report"], workspace)
+        inferred_sections = [name for name, enabled in (("lulc", classification.get("enabled")), ("plus", plus.get("enabled")),
+                             ("invest", invest.get("enabled")), ("ecosystem", ecosystem.get("enabled")),
+                             ("map", gis_outputs.get("enabled"))) if enabled]
+        required_sections = validation_config.get("required_sections", inferred_sections)
+        evidence = source_path(validation_config.get("evidence_file"), base)
+        if evidence:
+            evidence_dependencies, evidence_inputs = completed.copy(), [evidence]
+        else:
+            evidence = str(workspace / "validation" / "analysis_evidence.json")
+            stages.append({"id": "assemble_validation_evidence", "adapter": "command", "enabled": True,
+                           "command": [sys.executable, str(ROOT / "scripts" / "assemble_validation_evidence.py"), "--workspace", str(workspace),
+                                       "--required-sections", ",".join(required_sections), "--output", evidence],
+                           "inputs": [], "outputs": [evidence], "depends_on": completed.copy()})
+            evidence_dependencies, evidence_inputs = ["assemble_validation_evidence"], []
+        output = output_path(validation_config["output_report"], workspace)
         stages.append({"id": "analysis_validation", "adapter": "command", "enabled": True,
                        "command": [sys.executable, str(ROOT / "scripts" / "analysis_validation.py"), "--validation-file", evidence,
-                                   "--output-report", output], "inputs": [evidence], "outputs": [output], "depends_on": completed.copy()})
+                                   "--output-report", output], "inputs": [evidence, *evidence_inputs], "outputs": [output], "depends_on": evidence_dependencies})
     job = {"schema_version": 1, "project_id": project["project_id"], "workspace": str(workspace), "project_file": str(project_path),
            "security": {"input_roots": [str(resolved(item, base)) for item in project.get("security", {}).get("input_roots", ["."])],
                         "output_root": str(workspace), "confirm_overwrite": bool(project.get("security", {}).get("confirm_overwrite", False))},

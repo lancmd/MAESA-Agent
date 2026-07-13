@@ -16,6 +16,8 @@ def main() -> int:
     tradeoff = sub.add_parser("tradeoff")
     tradeoff.add_argument("--table", required=True, type=Path); tradeoff.add_argument("--fields", required=True)
     tradeoff.add_argument("--output", required=True, type=Path)
+    tradeoff.add_argument("--permutations", type=int, default=999); tradeoff.add_argument("--bootstrap", type=int, default=999)
+    tradeoff.add_argument("--seed", type=int, default=20260713)
     compare = sub.add_parser("compare")
     compare.add_argument("--table", required=True, type=Path); compare.add_argument("--reference", required=True)
     compare.add_argument("--scenario-field", default="scenario"); compare.add_argument("--fields", required=True)
@@ -28,7 +30,8 @@ def main() -> int:
     geodetector.add_argument("--fields", required=True); geodetector.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.action == "tradeoff":
-        report = tradeoff_analysis(args.table, [value for value in args.fields.split(",") if value], args.output)
+        report = tradeoff_analysis(args.table, [value for value in args.fields.split(",") if value], args.output,
+                                   args.permutations, args.bootstrap, args.seed)
     elif args.action == "compare":
         report = scenario_compare(args.table, args.scenario_field, args.reference,
                                   [value for value in args.fields.split(",") if value], args.output)

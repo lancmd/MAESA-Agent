@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import math
+import random
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -108,9 +109,20 @@ def evaluate(criteria_table: Path, config_path: Path, output_path: Path) -> dict
     output_rows: list[dict[str, Any]] = []
     normalised: dict[str, list[float]] = {}
     resolved_bounds: dict[str, dict[str, float]] = {}
-    configured_bounds = config.get("normalization", {}).get("bounds", {})
+    normalization = config.get("normalization", {})
+    if normalization and not isinstance(normalization, dict):
+        raise ValueError("normalization must be an object")
+    normalization_mode = normalization.get("mode", "within_project") if isinstance(normalization, dict) else "within_project"
+    if normalization_mode not in {"within_project", "fixed_reference"}:
+        raise ValueError("normalization.mode must be within_project or fixed_reference")
+    configured_bounds = normalization.get("bounds", {}) if isinstance(normalization, dict) else {}
     if configured_bounds and not isinstance(configured_bounds, dict):
         raise ValueError("normalization.bounds must be an object keyed by criterion field")
+    if normalization_mode == "fixed_reference":
+        missing_bounds = [item["field"] for item in criteria if item["field"] not in configured_bounds]
+        if missing_bounds:
+            raise ValueError("fixed_reference normalization requires bounds for: " + ", ".join(missing_bounds))
+    clipped_counts: dict[str, int] = {}
     for item in criteria:
         field = item["field"]
         specified = configured_bounds.get(field) if isinstance(configured_bounds, dict) else None
@@ -132,7 +144,8 @@ def evaluate(criteria_table: Path, config_path: Path, output_path: Path) -> dict
             scores = [(upper - value) / (upper - lower) for value in values[field]]
         else:
             raise ValueError(f"criterion direction must be benefit or cost: {field}")
-        normalised[field] = scores
+        clipped_counts[field] = sum(value < 0 or value > 1 for value in scores)
+        normalised[field] = [min(1.0, max(0.0, value)) for value in scores]
     for index, row in enumerate(rows):
         result = {id_field: row[id_field], **{field: row[field] for field in passthrough}}
         total = 0.0
@@ -149,7 +162,10 @@ def evaluate(criteria_table: Path, config_path: Path, output_path: Path) -> dict
         writer.writeheader(); writer.writerows(output_rows)
     metadata = {"method": method, "criteria": [item["field"] for item in criteria], "weights": weights,
                 "normalization_bounds": resolved_bounds, "lambda_max": lambda_max,
-                "consistency_ratio": consistency_ratio, "output": str(output_path.resolve())}
+                "consistency_ratio": consistency_ratio, "output": str(output_path.resolve()),
+                "normalization_mode": normalization_mode,
+                "cross_project_comparable": normalization_mode == "fixed_reference",
+                "clipped_value_counts": clipped_counts}
     output_path.with_suffix(output_path.suffix + ".metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return metadata
@@ -200,21 +216,61 @@ def _pearson(left: list[float], right: list[float]) -> float | None:
     return None if math.isclose(denominator, 0.0) else numerator / denominator
 
 
-def tradeoff_analysis(criteria_table: Path, fields: list[str], output_path: Path) -> dict[str, Any]:
+def tradeoff_analysis(criteria_table: Path, fields: list[str], output_path: Path,
+                      permutations: int = 999, bootstrap: int = 999, seed: int = 20260713) -> dict[str, Any]:
     if len(fields) < 2 or len(set(fields)) != len(fields):
         raise ValueError("trade-off analysis requires at least two distinct service fields")
     rows = _rows_and_fields(criteria_table, fields)
     values = {field: _numeric_column(rows, field) for field in fields}
+    if permutations < 0 or bootstrap < 0:
+        raise ValueError("permutations and bootstrap must be non-negative")
+    rng = random.Random(seed)
     output_rows: list[dict[str, Any]] = []
     for left, right in combinations(fields, 2):
         rho = _pearson(_average_ranks(values[left]), _average_ranks(values[right]))
         relation = "undefined" if rho is None else "synergy" if rho > 0 else "tradeoff" if rho < 0 else "neutral"
         output_rows.append({"service_a": left, "service_b": right, "sample_count": len(rows),
                             "spearman_rho": "" if rho is None else rho, "relation": relation})
+    for row in output_rows:
+        left, right = row["service_a"], row["service_b"]
+        rho = row["spearman_rho"]
+        if rho == "" or len(rows) < 3 or not permutations:
+            row["permutation_p_value"] = ""
+        else:
+            left_ranks = _average_ranks(values[left]); right_ranks = _average_ranks(values[right])
+            extreme = 0
+            for _ in range(permutations):
+                shuffled = right_ranks.copy(); rng.shuffle(shuffled)
+                simulated = _pearson(left_ranks, shuffled)
+                extreme += int(simulated is not None and abs(simulated) >= abs(float(rho)))
+            row["permutation_p_value"] = (extreme + 1) / (permutations + 1)
+        samples: list[float] = []
+        if rho != "" and len(rows) >= 3 and bootstrap:
+            for _ in range(bootstrap):
+                indices = [rng.randrange(len(rows)) for _ in rows]
+                value = _pearson(_average_ranks([values[left][index] for index in indices]),
+                                 _average_ranks([values[right][index] for index in indices]))
+                if value is not None:
+                    samples.append(value)
+        if samples:
+            samples.sort()
+            row["bootstrap_ci95_low"] = samples[max(0, int(0.025 * (len(samples) - 1)))]
+            row["bootstrap_ci95_high"] = samples[min(len(samples) - 1, int(0.975 * (len(samples) - 1)))]
+        else:
+            row["bootstrap_ci95_low"] = row["bootstrap_ci95_high"] = ""
+    p_rows = sorted((row for row in output_rows if isinstance(row["permutation_p_value"], float)),
+                    key=lambda row: row["permutation_p_value"])
+    previous = 1.0
+    for rank, row in reversed(list(enumerate(p_rows, 1))):
+        adjusted = min(previous, row["permutation_p_value"] * len(p_rows) / rank)
+        row["fdr_bh_p_value"] = adjusted; previous = adjusted
+    for row in output_rows:
+        row.setdefault("fdr_bh_p_value", "")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(output_rows[0])); writer.writeheader(); writer.writerows(output_rows)
-    return {"method": "spearman", "fields": fields, "output": str(output_path.resolve())}
+    return {"method": "spearman_permutation_bootstrap", "fields": fields, "permutations": permutations,
+            "bootstrap": bootstrap, "seed": seed, "output": str(output_path.resolve())}
 
 
 def scenario_compare(scores_table: Path, scenario_field: str, reference_scenario: str,
@@ -271,8 +327,8 @@ def _population_variance(values: list[float]) -> float:
 
 
 def geodetector_factor_analysis(samples_table: Path, target_field: str, factor_fields: list[str],
-                                output_path: Path) -> dict[str, Any]:
-    """Calculate GeoDetector q statistics on user-classified factor strata; no p-value is implied."""
+                                output_path: Path, permutations: int = 999, seed: int = 20260713) -> dict[str, Any]:
+    """Calculate GeoDetector q statistics and permutation p-values on classified factor strata."""
     if not factor_fields or len(set(factor_fields)) != len(factor_fields):
         raise ValueError("GeoDetector requires one or more distinct factor fields")
     rows = _rows_and_fields(samples_table, [target_field, *factor_fields])
@@ -281,32 +337,46 @@ def geodetector_factor_analysis(samples_table: Path, target_field: str, factor_f
     if math.isclose(total_variance, 0.0):
         raise ValueError("GeoDetector target field has zero variance")
 
-    def q_for(strata: list[str]) -> float:
+    def q_for(strata: list[str], values: list[float] = target) -> float:
         groups: dict[str, list[float]] = {}
-        for value, stratum in zip(target, strata):
+        for value, stratum in zip(values, strata):
             if not stratum:
                 raise ValueError("GeoDetector factor strata must not be blank")
             groups.setdefault(stratum, []).append(value)
         within = sum(len(group) * _population_variance(group) for group in groups.values())
-        return max(0.0, min(1.0, 1.0 - within / (len(target) * total_variance)))
+        variance = _population_variance(values)
+        return max(0.0, min(1.0, 1.0 - within / (len(values) * variance))) if not math.isclose(variance, 0.0) else 0.0
 
     q_values = {field: q_for([row[field] for row in rows]) for field in factor_fields}
-    output_rows: list[dict[str, Any]] = [
-        {"analysis": "factor", "factor_a": field, "factor_b": "", "q": value,
-         "interaction_relation": "", "note": "factor strata are user-classified"}
-        for field, value in q_values.items()
-    ]
+    rng = random.Random(seed)
+    def permutation_p(strata: list[str], observed: float) -> float | str:
+        if not permutations:
+            return ""
+        extreme = 0
+        for _ in range(permutations):
+            shuffled = target.copy(); rng.shuffle(shuffled)
+            extreme += int(q_for(strata, shuffled) >= observed)
+        return (extreme + 1) / (permutations + 1)
+    output_rows: list[dict[str, Any]] = []
+    for field, value in q_values.items():
+        strata = [row[field] for row in rows]
+        output_rows.append({"analysis": "factor", "factor_a": field, "factor_b": "", "q": value,
+                            "permutation_p_value": permutation_p(strata, value), "interaction_relation": "",
+                            "note": "factor strata are user-classified"})
     for left, right in combinations(factor_fields, 2):
         joint_q = q_for([f"{row[left]}|{row[right]}" for row in rows])
         low, high = min(q_values[left], q_values[right]), max(q_values[left], q_values[right])
         total = q_values[left] + q_values[right]
         relation = "weaken_or_non_enhance" if joint_q <= high else "independent" if math.isclose(joint_q, total, abs_tol=1e-9) else "bi_factor_enhancement" if joint_q < total else "nonlinear_enhancement"
+        strata = [f"{row[left]}|{row[right]}" for row in rows]
         output_rows.append({"analysis": "interaction", "factor_a": left, "factor_b": right, "q": joint_q,
-                            "interaction_relation": relation, "note": "q only; run a separate significance test if required"})
+                            "permutation_p_value": permutation_p(strata, joint_q), "interaction_relation": relation,
+                            "note": "factor strata are user-classified"})
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(output_rows[0])); writer.writeheader(); writer.writerows(output_rows)
-    return {"target_field": target_field, "factor_fields": factor_fields, "output": str(output_path.resolve())}
+    return {"target_field": target_field, "factor_fields": factor_fields, "permutations": permutations,
+            "seed": seed, "output": str(output_path.resolve())}
 
 
 def sensitivity_analysis(criteria_table: Path, config_path: Path, relative_delta: float,

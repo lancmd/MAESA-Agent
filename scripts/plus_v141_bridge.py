@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,51 @@ def configured_executable() -> Path | None:
     return Path(os.path.expandvars(raw)).expanduser().resolve()
 
 
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def executable_identity(executable: Path) -> dict[str, Any]:
+    """Return a version assertion and file fingerprint; do not trust its name."""
+    local = load_local_paths()
+    claimed_version = str(local.get("plus_v141_version") or os.getenv("PLUS_V141_VERSION") or "").strip()
+    expected_hash = str(local.get("plus_v141_sha256") or os.getenv("PLUS_V141_SHA256") or "").strip().lower()
+    actual_hash = sha256(executable)
+    if claimed_version and claimed_version != "PLUS V1.4.1":
+        raise ValueError(f"configured PLUS version is not supported by this bridge: {claimed_version}")
+    if expected_hash and actual_hash != expected_hash:
+        raise ValueError("PLUS executable SHA-256 does not match the locally configured V1.4.1 fingerprint")
+    if not claimed_version and not expected_hash:
+        raise ValueError("configure plus_v141_version or plus_v141_sha256; executable file names are not used for version validation")
+    stat = executable.stat()
+    return {"configured_version": claimed_version or "PLUS V1.4.1 (hash-pinned)", "sha256": actual_hash,
+            "size_bytes": stat.st_size, "modified_epoch": stat.st_mtime}
+
+
+def pid_is_alive(pid: Any) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value == 259)
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def scenario_paths(envelope: dict[str, Any]) -> tuple[str, Path, Path, Path]:
     parameters = envelope.get("parameters", {})
     detail = parameters.get("parameters", {}) if isinstance(parameters.get("parameters"), dict) else {}
@@ -72,12 +118,14 @@ def scenario_paths(envelope: dict[str, Any]) -> tuple[str, Path, Path, Path]:
     return scenario, workspace, expected, request_pack
 
 
-def write_handoff(envelope: dict[str, Any], executable: Path | None, dry_run: bool) -> tuple[Path, Path]:
+def write_handoff(envelope: dict[str, Any], executable: Path, identity: dict[str, Any], dry_run: bool) -> tuple[Path, Path]:
     scenario, workspace, expected, request_pack = scenario_paths(envelope)
     workspace.mkdir(parents=True, exist_ok=True)
     handoff = workspace / f"plus_v141_gui_handoff_{scenario}.json"
     state = workspace / "plus_execution_state.json"
-    command = [str(executable)] if executable else []
+    detail = envelope.get("parameters", {}).get("parameters", {})
+    plus_settings = detail.get("plus_settings", {}) if isinstance(detail, dict) else {}
+    command = [str(executable)]
     handoff.write_text(json.dumps({
         "bridge": "plus_v141_gui_handoff",
         "software": "PLUS V1.4.1",
@@ -86,7 +134,20 @@ def write_handoff(envelope: dict[str, Any], executable: Path | None, dry_run: bo
         "expected_output": str(expected),
         "launch_command": command,
         "launch_arguments": [],
-        "working_directory": str(executable.parent) if executable else None,
+        "working_directory": str(executable.parent),
+        "executable_identity": identity,
+        "parameterfile_directory": str(executable.parent / "Parameterfile"),
+        "gui_parameter_checklist": {
+            "scenario": scenario,
+            "historical_lulc": detail.get("historical_lulc", []),
+            "driver_factors": detail.get("driver_factors", {}),
+            "random_seed": plus_settings.get("random_seed"),
+            "neighborhood_weights": plus_settings.get("neighborhood_weights"),
+            "transition_matrix": plus_settings.get("transition_matrix"),
+            "constraint_raster": plus_settings.get("constraint_raster"),
+            "land_demand": plus_settings.get("land_demand", {}),
+            "resource_extraction": detail.get("resource_extraction") if scenario == "RE" else None,
+        },
         "automation": "interactive_gui",
         "notes": [
             "This PLUS distribution has no verified batch or command-line simulation command.",
@@ -101,7 +162,8 @@ def write_handoff(envelope: dict[str, Any], executable: Path | None, dry_run: bo
         "request": str(request_pack),
         "handoff": str(handoff),
         "expected_output": str(expected),
-        "executable": str(executable) if executable else None,
+        "executable": str(executable),
+        "executable_identity": identity,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return handoff, state
 
@@ -114,9 +176,10 @@ def main() -> int:
             result = response(envelope, "failed", error="unsupported protocol version")
         elif envelope.get("operation") == "system.capabilities":
             executable = configured_executable()
+            identity = executable_identity(executable) if executable and executable.is_file() else None
             result = response(envelope, "completed", result={
                 "backend": "plus", "software": "PLUS V1.4.1", "mode": "local-gui-handoff", "local_only": True,
-                "executable_configured": bool(executable and executable.is_file()),
+                "executable_configured": bool(identity), "executable_identity": identity,
                 "operations": ["system.capabilities", "plus.run_scenario"],
                 "limitations": ["No verified vendor command-line simulation entry; GUI completion is required."],
             })
@@ -126,22 +189,41 @@ def main() -> int:
             executable = configured_executable()
             if executable is None or not executable.is_file():
                 result = response(envelope, "failed", error="PLUS V1.4.1 executable is not configured or does not exist")
-            elif executable.name.lower() != "plus v1.4.1_boxed.exe":
-                result = response(envelope, "failed", error="configured executable is not the expected PLUS V1.4.1 boxed application")
             else:
                 dry_run = bool(envelope.get("parameters", {}).get("dry_run", False))
-                handoff, state = write_handoff(envelope, executable, dry_run)
-                if dry_run:
-                    result = response(envelope, "prepared", outputs=[str(handoff), str(state)],
-                                      message="PLUS V1.4.1 GUI hand-off prepared (dry run)")
+                identity = executable_identity(executable)
+                _, workspace, expected, _ = scenario_paths(envelope)
+                state = workspace / "plus_execution_state.json"
+                if not dry_run and expected.exists():
+                    result = response(envelope, "completed", outputs=[str(expected)],
+                                      message="contracted PLUS V1.4.1 output already exists; no GUI launch was needed")
+                elif not dry_run and state.is_file():
+                    prior = json.loads(state.read_text(encoding="utf-8"))
+                    if prior.get("bridge") == "plus_v141_gui_handoff" and pid_is_alive(prior.get("process_id")):
+                        result = response(envelope, "waiting_interactive", outputs=[str(state)],
+                                          message="continuing the existing PLUS V1.4.1 GUI session", process_id=prior["process_id"])
+                    else:
+                        handoff, state = write_handoff(envelope, executable, identity, dry_run)
+                        process = subprocess.Popen([str(executable)], cwd=str(executable.parent), shell=False)
+                        state_payload = json.loads(state.read_text(encoding="utf-8"))
+                        state_payload.update({"status": "waiting_interactive", "process_id": process.pid})
+                        state.write_text(json.dumps(state_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                        result = response(envelope, "waiting_interactive", outputs=[str(handoff), str(state)],
+                                          message="PLUS V1.4.1 GUI launched without command-line arguments; complete the scenario and export the contracted GeoTIFF",
+                                          process_id=process.pid)
                 else:
-                    process = subprocess.Popen([str(executable)], cwd=str(executable.parent), shell=False)
-                    state_payload = json.loads(state.read_text(encoding="utf-8"))
-                    state_payload.update({"status": "waiting_interactive", "process_id": process.pid})
-                    state.write_text(json.dumps(state_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                    result = response(envelope, "waiting_interactive", outputs=[str(handoff), str(state)],
-                                      message="PLUS V1.4.1 GUI launched without command-line arguments; complete the scenario and export the contracted GeoTIFF",
-                                      process_id=process.pid)
+                    handoff, state = write_handoff(envelope, executable, identity, dry_run)
+                    if dry_run:
+                        result = response(envelope, "prepared", outputs=[str(handoff), str(state)],
+                                          message="PLUS V1.4.1 GUI hand-off prepared (dry run)")
+                    else:
+                        process = subprocess.Popen([str(executable)], cwd=str(executable.parent), shell=False)
+                        state_payload = json.loads(state.read_text(encoding="utf-8"))
+                        state_payload.update({"status": "waiting_interactive", "process_id": process.pid})
+                        state.write_text(json.dumps(state_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                        result = response(envelope, "waiting_interactive", outputs=[str(handoff), str(state)],
+                                          message="PLUS V1.4.1 GUI launched without command-line arguments; complete the scenario and export the contracted GeoTIFF",
+                                          process_id=process.pid)
     except Exception as error:
         result = response(envelope, "failed", error=str(error))
     print(json.dumps(result, ensure_ascii=True))
