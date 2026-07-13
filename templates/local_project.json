@@ -45,6 +45,8 @@
     "scheme": "high_water_coal_7class",
     "output_lulc": "outputs/lulc.tif",
     "output_confidence": "outputs/lulc_confidence.tif",
+    "output_low_confidence": null,
+    "low_confidence_threshold": null,
     "envi_method": "maximum_likelihood",
     "accuracy": {
       "enabled": false,
@@ -82,7 +84,14 @@
   "invest": {
     "enabled": false,
     "output_workspace": "outputs/invest",
-    "datastack": null
+    "datastack": null,
+    "models": {
+      "carbon": {"enabled": true, "provided_datastack": null},
+      "annual_water_yield": {"enabled": false, "datastack_template": null, "expected_outputs": []},
+      "habitat_quality": {"enabled": false, "datastack_template": null, "expected_outputs": []},
+      "sediment_delivery_ratio": {"enabled": false, "datastack_template": null, "expected_outputs": []},
+      "nutrient_delivery_ratio": {"enabled": false, "datastack_template": null, "expected_outputs": []}
+    }
   },
   "subsidence_water": {
     "enabled": false,
@@ -110,6 +119,7 @@
       "scenario_field": "scenario",
       "reference_scenario": "ND",
       "scenario_value_fields": ["ecosystem_service_score"],
+      "grid_cell_pixels": null,
       "geodetector_target_field": "ecosystem_service_score",
       "geodetector_factor_fields": [],
       "geodetector_samples": null
