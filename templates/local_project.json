@@ -88,8 +88,8 @@
     "datastack": null,
     "models": {
       "carbon": {"enabled": true, "provided_datastack": null},
-      "annual_water_yield": {"enabled": false, "datastack_template": null, "expected_outputs": []},
-      "habitat_quality": {"enabled": false, "datastack_template": null, "expected_outputs": []},
+      "annual_water_yield": {"enabled": false, "datastack_template": null, "expected_outputs": [], "service_field": "water_yield_m3", "service_unit": "m3", "service_aggregation": "depth_mm_to_m3"},
+      "habitat_quality": {"enabled": false, "datastack_template": null, "expected_outputs": [], "service_field": "habitat_quality", "service_unit": "index_0_to_1", "service_aggregation": "mean"},
       "sediment_delivery_ratio": {"enabled": false, "datastack_template": null, "expected_outputs": []},
       "nutrient_delivery_ratio": {"enabled": false, "datastack_template": null, "expected_outputs": []}
     }

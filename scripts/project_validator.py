@@ -260,6 +260,13 @@ def validate(project_path: Path) -> dict[str, Any]:
                 errors.append(f"invest.models.{name}.expected_outputs must be a list of non-empty paths")
             if name != "carbon" and (not isinstance(outputs, list) or not outputs):
                 errors.append(f"invest.models.{name}.expected_outputs is required to verify scenario outputs")
+            aggregation = config.get("service_aggregation")
+            if aggregation is not None and aggregation not in {"sum", "mean", "depth_mm_to_m3"}:
+                errors.append(f"invest.models.{name}.service_aggregation must be sum, mean, or depth_mm_to_m3")
+            if name == "annual_water_yield" and aggregation == "sum":
+                warnings.append("Annual Water Yield aggregation=sum retains raw depth values; use depth_mm_to_m3 for volume comparison")
+            if name == "habitat_quality" and aggregation == "sum":
+                warnings.append("Habitat Quality aggregation=sum is not an average quality index; use mean for scenario comparison")
             if plus.get("enabled") and ecosystem.get("enabled") and (not isinstance(config.get("service_unit"), str) or not config["service_unit"].strip()):
                 errors.append(f"invest.models.{name}.service_unit is required for scenario ecosystem-service aggregation")
         carbon_config = active_models.get("carbon", {}) if isinstance(active_models.get("carbon", {}), dict) else {}

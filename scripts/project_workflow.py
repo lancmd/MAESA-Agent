@@ -17,11 +17,11 @@ from project_validator import validate
 ROOT = Path(__file__).resolve().parents[1]
 INVEST_MODELS = {
     "carbon": {"cli": "carbon", "lulc_argument": "lulc_cur_path", "default_output": "tot_c_cur.tif",
-               "service_field": "carbon_storage_t_c"},
+               "service_field": "carbon_storage_t_c", "service_aggregation": "sum"},
     "annual_water_yield": {"cli": "annual_water_yield", "lulc_argument": "lulc_path", "default_output": None,
-                            "service_field": "water_yield"},
+                            "service_field": "water_yield_m3", "service_aggregation": "depth_mm_to_m3"},
     "habitat_quality": {"cli": "habitat_quality", "lulc_argument": "lulc_cur_path", "default_output": None,
-                        "service_field": "habitat_quality"},
+                        "service_field": "habitat_quality", "service_aggregation": "mean"},
     "sediment_delivery_ratio": {"cli": "sdr", "lulc_argument": "lulc_path", "default_output": None,
                                   "service_field": "sediment_retention"},
     "nutrient_delivery_ratio": {"cli": "ndr", "lulc_argument": "lulc_path", "default_output": None,
@@ -81,6 +81,14 @@ def scenario_datastack(model: str, config: dict[str, Any], lulc: str, carbon_tab
         args = payload.setdefault("args", {})
         if not isinstance(args, dict):
             raise ValueError(f"InVEST {model} datastack args must be an object")
+        # Datastack templates are often stored beside parameter CSVs.  They
+        # are cloned into workspace/generated, so make their local references
+        # absolute before cloning rather than breaking relative table paths.
+        for key, value in list(args.items()):
+            if isinstance(value, str) and (key.endswith("_path") or key.endswith("_table_path") or key.endswith("_vector_path")):
+                candidate = Path(value).expanduser()
+                if not candidate.is_absolute():
+                    args[key] = str((template.parent / candidate).resolve())
         args[config.get("lulc_argument", INVEST_MODELS[model]["lulc_argument"])] = lulc
         write_json(output, payload)
         return str(output)
@@ -530,11 +538,22 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                 if not isinstance(configured_outputs, list) or any(not isinstance(item, str) or not item for item in configured_outputs):
                     raise ValueError(f"invest.models.{model}.expected_outputs must be a list of non-empty relative paths")
                 outputs = [str((model_workspace / item).resolve()) for item in configured_outputs]
+                model_dependencies = dependency_by_scenario[scenario]
+                if model in {"annual_water_yield", "habitat_quality"}:
+                    contract = str(workspace / "validation" / f"{stage_id}_input_contract.json")
+                    contract_id = f"{stage_id}_input_contract"
+                    stages.append({"id": contract_id, "adapter": "command", "enabled": True,
+                                   "command": [sys.executable, str(ROOT / "scripts" / "invest_ecosystem_contract.py"), "--model", model,
+                                               "--datastack", datastack, "--output", contract], "inputs": [datastack],
+                                   "outputs": [contract], "depends_on": model_dependencies})
+                    model_dependencies = [contract_id]
                 stages.append({"id": stage_id, "adapter": "invest", "enabled": True, "model": INVEST_MODELS[model]["cli"],
                                "datastack": datastack, "model_workspace": str(model_workspace),
                                "inputs": [datastack, source_lulc] + ([carbon] if carbon else []),
                                "outputs": outputs, "service_field": str(model_config.get("service_field", INVEST_MODELS[model]["service_field"])),
-                               "service_unit": model_config.get("service_unit"), "depends_on": dependency_by_scenario[scenario]})
+                               "service_unit": model_config.get("service_unit"),
+                               "service_aggregation": model_config.get("service_aggregation", INVEST_MODELS[model].get("service_aggregation", "sum")),
+                               "depends_on": model_dependencies})
                 for index, result_raster in enumerate(outputs):
                     add_raster_map(stages, f"InVEST_{model}_{scenario}_{index + 1}", result_raster,
                                    f"InVEST {model} {scenario}", "continuous", classification.get("scheme", "standard_6class"),
@@ -572,6 +591,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                 field = str(model_config.get("service_field", INVEST_MODELS[model]["service_field"]))
                 if model_config.get("service_unit"):
                     command.extend(["--service-unit", f"{field}={model_config['service_unit']}"])
+                command.extend(["--service-aggregation", f"{field}={model_config.get('service_aggregation', INVEST_MODELS[model].get('service_aggregation', 'sum'))}"])
             stages.append({"id": "ecosystem_scenario_inputs", "adapter": "command", "enabled": True, "command": command,
                            "inputs": list(invest_outputs.values()) + ([source_path(ecosystem["criteria_table"], base)] if ecosystem.get("criteria_table") else []),
                            "outputs": [item for item in [criteria, criteria + ".metadata.json", geometry] if item], "depends_on": invest_dependencies.copy()})

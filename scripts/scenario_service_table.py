@@ -11,18 +11,24 @@ from pathlib import Path
 from typing import Any
 
 
-def raster_total(path: Path) -> float:
+def raster_total(path: Path, aggregation: str = "sum") -> float:
     import numpy as np  # type: ignore
     import rasterio  # type: ignore
     with rasterio.open(path) as src:
-        total = 0.0
+        total, count = 0.0, 0
+        cell_area_m2 = abs(float(src.transform.a * src.transform.e))
         for _, window in src.block_windows(1):
             values = src.read(1, window=window, masked=True)
-            total += float(np.ma.filled(values, 0.0).sum(dtype="float64"))
+            valid = values.compressed()
+            total += float(valid.sum(dtype="float64")); count += int(valid.size)
+    if aggregation == "depth_mm_to_m3":
+        return total * cell_area_m2 / 1000.0
+    if aggregation == "mean":
+        return total / count if count else 0.0
     return total
 
 
-def grid_totals(path: Path, cell_pixels: int) -> dict[str, float]:
+def grid_totals(path: Path, cell_pixels: int, aggregation: str = "sum") -> dict[str, float]:
     """Aggregate a raster into deterministic regular-grid units without vector dependencies."""
     if cell_pixels < 1:
         raise ValueError("grid_cell_pixels must be a positive integer")
@@ -35,8 +41,12 @@ def grid_totals(path: Path, cell_pixels: int) -> dict[str, float]:
             for col in range(0, src.width, cell_pixels):
                 height, width = min(cell_pixels, src.height - row), min(cell_pixels, src.width - col)
                 values = src.read(1, window=Window(col, row, width, height), masked=True)
-                result[f"r{row // cell_pixels:05d}_c{col // cell_pixels:05d}"] = float(
-                    np.ma.filled(values, 0.0).sum(dtype="float64"))
+                valid = values.compressed(); total = float(valid.sum(dtype="float64"))
+                if aggregation == "depth_mm_to_m3":
+                    total *= abs(float(src.transform.a * src.transform.e)) / 1000.0
+                elif aggregation == "mean":
+                    total = total / int(valid.size) if valid.size else 0.0
+                result[f"r{row // cell_pixels:05d}_c{col // cell_pixels:05d}"] = total
     return result
 
 
@@ -83,7 +93,8 @@ def read_rows(path: Path | None) -> list[dict[str, str]]:
 
 def build(service_rasters: dict[str, dict[str, Path]], supplemental: Path | None, output: Path,
           scenario_field: str = "scenario", id_field: str = "unit_id", grid_cell_pixels: int | None = None,
-          service_units: dict[str, str] | None = None, grid_geometry: Path | None = None) -> dict[str, Any]:
+          service_units: dict[str, str] | None = None, grid_geometry: Path | None = None,
+          service_aggregations: dict[str, str] | None = None) -> dict[str, Any]:
     if not service_rasters:
         raise ValueError("at least one scenario service raster is required")
     supplied = read_rows(supplemental)
@@ -106,7 +117,7 @@ def build(service_rasters: dict[str, dict[str, Path]], supplemental: Path | None
             elif not grids_match(reference, signature):
                 raise ValueError(f"InVEST service raster grid differs from reference: {raster}")
         if grid_cell_pixels:
-            by_field = {field: grid_totals(raster, grid_cell_pixels) for field, raster in services.items()}
+            by_field = {field: grid_totals(raster, grid_cell_pixels, (service_aggregations or {}).get(field, "sum")) for field, raster in services.items()}
             unit_ids = set().union(*[set(values) for values in by_field.values()])
             for unit_id in sorted(unit_ids):
                 row: dict[str, Any] = supplied_by_key.get((code, unit_id), {scenario_field: code, id_field: unit_id})
@@ -118,7 +129,7 @@ def build(service_rasters: dict[str, dict[str, Path]], supplemental: Path | None
             row = supplied_by_key.get((code, code), {scenario_field: code, id_field: code})
             row.setdefault(scenario_field, code); row.setdefault(id_field, code)
             for field, raster in services.items():
-                row[field] = raster_total(raster)
+                row[field] = raster_total(raster, (service_aggregations or {}).get(field, "sum"))
             result.append(row)
     fields = sorted({key for row in result for key in row})
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -132,6 +143,8 @@ def build(service_rasters: dict[str, dict[str, Path]], supplemental: Path | None
               "grid_geometry": geometry, "reference_grid": reference,
               "service_units": {field: (service_units or {}).get(field, "undeclared")
                                 for services in service_rasters.values() for field in services},
+              "service_aggregations": {field: (service_aggregations or {}).get(field, "sum")
+                                       for services in service_rasters.values() for field in services},
               "service_rasters": {scenario: {field: str(path.resolve()) for field, path in values.items()}
                                   for scenario, values in service_rasters.items()}}
     output.with_suffix(output.suffix + ".metadata.json").write_text(
@@ -151,6 +164,7 @@ def main() -> int:
     parser.add_argument("--grid-cell-pixels", type=int)
     parser.add_argument("--grid-geometry", type=Path, help="GeoJSON regular-grid geometry when aggregating rasters")
     parser.add_argument("--service-unit", action="append", default=[], help="FIELD=unit; repeat for each service raster")
+    parser.add_argument("--service-aggregation", action="append", default=[], help="FIELD=sum|mean|depth_mm_to_m3")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     rasters: dict[str, dict[str, Path]] = {}
@@ -171,8 +185,14 @@ def main() -> int:
         if not separator or not field or not unit:
             raise SystemExit("--service-unit uses FIELD=unit")
         units[field] = unit
+    aggregations: dict[str, str] = {}
+    for item in args.service_aggregation:
+        field, separator, method = item.partition("=")
+        if not separator or not field or method not in {"sum", "mean", "depth_mm_to_m3"}:
+            raise SystemExit("--service-aggregation uses FIELD=sum|mean|depth_mm_to_m3")
+        aggregations[field] = method
     report = build(rasters, args.supplemental, args.output, args.scenario_field, args.id_field, args.grid_cell_pixels,
-                   units, args.grid_geometry.resolve() if args.grid_geometry else None)
+                   units, args.grid_geometry.resolve() if args.grid_geometry else None, aggregations)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
