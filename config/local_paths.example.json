@@ -4,6 +4,7 @@
   "invest": "${INVEST_CLI}",
   "idl": "${IDL_EXE}",
   "plus": "${PLUS_EXE}",
+  "plus_v141_executable": "${PLUS_V141_EXECUTABLE}",
   "gdalinfo": "${GDALINFO}",
-  "plus_bridge_command": []
+  "plus_bridge_command": ["{python}", "{skill_root}/scripts/plus_v141_bridge.py"]
 }

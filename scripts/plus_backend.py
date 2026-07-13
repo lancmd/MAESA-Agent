@@ -28,6 +28,11 @@ def response(envelope: dict[str, Any], status: str, **values: Any) -> dict[str, 
     return {"protocol_version": "1.0", "request_id": envelope.get("request_id"), "status": status, **values}
 
 
+def expand_command_item(value: str) -> str:
+    """Expand portable local-bridge placeholders without embedding machine paths."""
+    return os.path.expandvars(value.replace("{python}", sys.executable).replace("{skill_root}", str(ROOT)))
+
+
 def bridge_command() -> list[str]:
     value = os.getenv("MINING_PLUS_BRIDGE_COMMAND", "").strip()
     if not value:
@@ -36,15 +41,15 @@ def bridge_command() -> list[str]:
             payload = json.loads(configured.read_text(encoding="utf-8-sig"))
             command = payload.get("plus_bridge_command", [])
             if isinstance(command, list) and all(isinstance(item, str) and item for item in command):
-                return [os.path.expandvars(item) for item in command]
+                return [expand_command_item(item) for item in command]
     if not value:
         return []
     if value.startswith("["):
         parsed = json.loads(value)
         if not isinstance(parsed, list) or not all(isinstance(item, str) and item for item in parsed):
             raise ValueError("MINING_PLUS_BRIDGE_COMMAND JSON value must be a non-empty command array")
-        return parsed
-    return shlex.split(value, posix=False)
+        return [expand_command_item(item) for item in parsed]
+    return [expand_command_item(item) for item in shlex.split(value, posix=False)]
 
 
 def scenario_paths(envelope: dict[str, Any]) -> tuple[str, Path, Path]:
@@ -125,6 +130,30 @@ def normalize_bridge_result(envelope: dict[str, Any], result: dict[str, Any]) ->
     return result
 
 
+def inspect_bridge(command: list[str], envelope: dict[str, Any]) -> dict[str, Any] | None:
+    """Ask a configured local bridge for its own declared capabilities.
+
+    This is a read-only protocol request.  It avoids guessing a vendor version
+    from the bridge command or its file name.
+    """
+    if not command:
+        return None
+    probe = {"protocol_version": "1.0", "request_id": envelope.get("request_id"),
+             "operation": "system.capabilities", "parameters": {}}
+    try:
+        process = subprocess.run(command, input=json.dumps(probe, ensure_ascii=True), text=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8",
+                                 errors="replace", timeout=30, check=False)
+        if process.returncode:
+            return {"available": False, "error": process.stderr.strip() or f"bridge returned {process.returncode}"}
+        result = json.loads(process.stdout)
+        if result.get("status") != "completed" or not isinstance(result.get("result"), dict):
+            return {"available": False, "error": result.get("error", "bridge did not return capabilities")}
+        return {"available": True, **result["result"]}
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+        return {"available": False, "error": str(error)}
+
+
 def main() -> int:
     envelope: dict[str, Any] = {}
     try:
@@ -137,6 +166,7 @@ def main() -> int:
             result = response(envelope, "completed", result={
                 "backend": "plus", "mode": "local-command-bridge", "local_only": True,
                 "bridge_configured": bool(command),
+                "bridge_capabilities": inspect_bridge(command, envelope),
                 "operations": ["system.capabilities", "plus.run_scenario"],
             })
         elif operation != "plus.run_scenario":
@@ -151,6 +181,8 @@ def main() -> int:
                 result = response(envelope, "prepared", outputs=[pack, state],
                                   message="local PLUS bridge is not configured; task pack is ready for the installed PLUS version")
             else:
+                # GUI bridges use this persisted request when the user resumes a scenario.
+                write_request_pack(envelope)
                 process = subprocess.run(command, input=json.dumps(envelope, ensure_ascii=True), text=True,
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8",
                                          errors="replace", timeout=3600, check=False)

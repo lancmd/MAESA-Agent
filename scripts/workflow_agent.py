@@ -91,7 +91,8 @@ def probe_software(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         "idl": [
             overrides.get("idl"), configured.get("idl"), os.getenv("IDL_EXE"), shutil.which("idl"),
         ],
-        "plus": [overrides.get("plus"), configured.get("plus"), os.getenv("PLUS_EXE"), shutil.which("PLUS.exe")],
+        "plus": [overrides.get("plus"), configured.get("plus_v141_executable"), configured.get("plus"),
+                 os.getenv("PLUS_V141_EXECUTABLE"), os.getenv("PLUS_EXE"), shutil.which("PLUS.exe")],
         "gdalinfo": [
             overrides.get("gdalinfo"), configured.get("gdalinfo"), os.getenv("GDALINFO"), shutil.which("gdalinfo"),
         ],

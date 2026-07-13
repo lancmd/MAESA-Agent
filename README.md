@@ -51,7 +51,16 @@ workspace/outputs/plus/EP/PLUS_EP.tif
 workspace/outputs/plus/RE/PLUS_RE.tif
 ```
 
-每个目录有独立请求包和状态记录。配置本机版本对应的 `plus_bridge_command` 后，桥接器需要将结果写到上述固定位置；工作流随后检查 CRS、网格、整数编码、类别代码及碳密度覆盖。没有桥接器时阶段状态为 `prepared`。在 PLUS GUI 或 Computer Use 完成后，只要将结果写到对应路径，再次运行同一项目即可自动接管并继续后续阶段。
+每个目录有独立请求包和状态记录。已核对的 **PLUS V1.4.1 boxed** 发行包使用桌面 GUI 和 `Parameterfile` 持久化参数，没有公开、可验证的批处理预测命令。复制示例配置后，在未提交的 `config/local_paths.json` 中填写本机路径：
+
+```json
+{
+  "plus_v141_executable": "C:\\path\\to\\PLUS v1.4.1_boxed.exe",
+  "plus_bridge_command": ["{python}", "{skill_root}/scripts/plus_v141_bridge.py"]
+}
+```
+
+该桥接器会无参数启动本机 GUI，并在每个情景目录生成独立的交接清单、请求包和状态记录；它不声称已完成预测。按照交接清单在 GUI 中导出结果到上述固定位置后，再次运行同一项目，工作流会自动检查 CRS、网格、整数编码、类别代码和碳密度覆盖，并接管后续 InVEST 与生态服务阶段。若未来获得厂商提供的 CLI/API，可将 `plus_bridge_command` 改为对应的本地命令桥接器。
 
 RE 情景只使用统一的 `resource_extraction` 契约：`core_driver_input`、`core_driver_unit: "m"`、`core_driver_convention: "positive_down"`。项目模板可用 `inputs.subsidence_depth_raster` 作为简写，桥接器实际收到的是已解析的对齐 TIFF；`w.dat` 只是外部沉陷计算的来源记录。
 
