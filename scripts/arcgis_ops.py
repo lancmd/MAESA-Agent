@@ -14,7 +14,7 @@ from subsidence_water_carbon import calculate_components, calculate_invest_repla
 
 
 SUPPORTED = {
-    "describe", "project_raster", "resample", "extract_by_mask", "slope_aspect",
+    "describe", "project_raster", "resample", "extract_by_mask", "align_raster", "slope_aspect",
     "distance_accumulation", "build_raster_attribute_table", "class_area", "combine_transition",
     "w_points_to_raster", "subsidence_water_volume", "subsidence_water_carbon", "export_layout", "compose_layout"
 }
@@ -48,11 +48,19 @@ def validate(spec: dict[str, Any]) -> list[str]:
         if op_type == "combine_transition" and not operation.get("inputs"):
             errors.append(f"operation {op_id}: inputs are required")
         if op_type == "w_points_to_raster":
-            for field in ("table", "x_field", "y_field", "value_field", "output", "cell_size", "coordinate_system"):
+            for field in ("table", "x_field", "y_field", "value_field", "output"):
                 if operation.get(field) in (None, ""):
                     errors.append(f"operation {op_id}: {field} is required")
+            if not operation.get("cell_size") and not operation.get("cell_size_from_raster"):
+                errors.append(f"operation {op_id}: cell_size or cell_size_from_raster is required")
+            if not operation.get("coordinate_system") and not operation.get("coordinate_system_from_raster"):
+                errors.append(f"operation {op_id}: coordinate_system or coordinate_system_from_raster is required")
         if op_type == "subsidence_water_volume":
             for field in ("dem", "subsidence_depth", "water_level_elevation_m", "water_depth_output", "volume_table"):
+                if operation.get(field) in (None, ""):
+                    errors.append(f"operation {op_id}: {field} is required")
+        if op_type == "align_raster":
+            for field in ("input", "master", "output"):
                 if operation.get(field) in (None, ""):
                     errors.append(f"operation {op_id}: {field} is required")
         if op_type == "subsidence_water_carbon":
@@ -274,6 +282,24 @@ def execute_operation(arcpy: Any, operation: dict[str, Any], workspace: Path) ->
     elif op_type == "extract_by_mask":
         output = resolve(operation["output"], workspace); ensure_parent(output)
         arcpy.sa.ExtractByMask(source, resolve(operation["mask"], workspace)).save(output)
+    elif op_type == "align_raster":
+        # ProjectRaster honours the supplied environment.  Making the target
+        # grid explicit avoids the common 'same CRS, shifted cells' failure in
+        # PLUS and InVEST inputs.
+        master = resolve(operation["master"], workspace)
+        output = resolve(operation["output"], workspace); ensure_parent(output)
+        description = arcpy.Describe(master)
+        old = {name: getattr(arcpy.env, name) for name in ("snapRaster", "cellSize", "extent", "mask")}
+        try:
+            arcpy.env.snapRaster = master
+            arcpy.env.cellSize = master
+            arcpy.env.extent = master
+            arcpy.env.mask = resolve(operation["mask"], workspace) if operation.get("mask") else None
+            arcpy.management.ProjectRaster(source, output, description.spatialReference,
+                                           operation.get("resampling", "BILINEAR"), description.meanCellWidth)
+        finally:
+            for name, value in old.items():
+                setattr(arcpy.env, name, value)
     elif op_type == "slope_aspect":
         slope_output = resolve(operation["slope_output"], workspace); ensure_parent(slope_output)
         aspect_output = resolve(operation["aspect_output"], workspace); ensure_parent(aspect_output)
@@ -316,9 +342,23 @@ def execute_operation(arcpy: Any, operation: dict[str, Any], workspace: Path) ->
         points = resolve(operation.get("points_output", f"intermediate/{operation['id']}_points.shp"), workspace)
         output = resolve(operation["output"], workspace)
         ensure_parent(points); ensure_parent(output)
-        arcpy.management.XYTableToPoint(table, points, operation["x_field"], operation["y_field"], None,
-                                        operation["coordinate_system"])
-        arcpy.conversion.PointToRaster(points, operation["value_field"], output, "MEAN", "NONE", operation["cell_size"])
+        coordinate_system = operation.get("coordinate_system")
+        if not coordinate_system and operation.get("coordinate_system_from_raster"):
+            coordinate_system = arcpy.Describe(resolve(operation["coordinate_system_from_raster"], workspace)).spatialReference
+        if not coordinate_system:
+            raise RuntimeError("w_points_to_raster requires coordinate_system or coordinate_system_from_raster")
+        cell_size = operation.get("cell_size")
+        if (cell_size in (None, "", "master")) and operation.get("cell_size_from_raster"):
+            cell_size = arcpy.Describe(resolve(operation["cell_size_from_raster"], workspace)).meanCellWidth
+        if cell_size in (None, "", "master"):
+            raise RuntimeError("w_points_to_raster requires cell_size or cell_size_from_raster")
+        arcpy.management.XYTableToPoint(table, points, operation["x_field"], operation["y_field"], None, coordinate_system)
+        method = str(operation.get("interpolation", "POINT_TO_RASTER")).upper()
+        if method == "IDW":
+            arcpy.sa.Idw(points, operation["value_field"], cell_size, operation.get("power", 2),
+                         operation.get("search_radius", "VARIABLE 12")).save(output)
+        else:
+            arcpy.conversion.PointToRaster(points, operation["value_field"], output, "MEAN", "NONE", cell_size)
     elif op_type == "subsidence_water_volume":
         dem = arcpy.sa.Raster(resolve(operation["dem"], workspace))
         subsidence = arcpy.sa.Raster(resolve(operation["subsidence_depth"], workspace))

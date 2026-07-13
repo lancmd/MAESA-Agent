@@ -86,6 +86,38 @@ def lulc_needed(classification: dict[str, Any], plus: dict[str, Any], invest: di
     return bool(classification.get("enabled") or (invest.get("enabled") and not plus.get("enabled")))
 
 
+def imagery_periods(inputs: dict[str, Any], base: Path, input_roots: list[Path], errors: list[str]) -> list[dict[str, Any]]:
+    """Validate ordered multi-date imagery without breaking the older imagery list.
+
+    ``imagery_periods`` is the automation-facing form.  It is intentionally
+    explicit about the year so PLUS never guesses chronology from a filename.
+    """
+    raw = inputs.get("imagery_periods")
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or not raw:
+        errors.append("inputs.imagery_periods must be a non-empty list when supplied")
+        return []
+    result: list[dict[str, Any]] = []
+    years: list[int] = []
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            errors.append(f"imagery_periods[{index}] must be an object with year and path")
+            continue
+        year = item.get("year")
+        if not isinstance(year, int) or not 1900 <= year <= 2200:
+            errors.append(f"imagery_periods[{index}].year must be an integer from 1900 to 2200")
+        else:
+            years.append(year)
+        required_path(f"imagery_periods[{index}].path", item.get("path"), base, input_roots, errors)
+        result.append(item)
+    if len(years) != len(set(years)):
+        errors.append("inputs.imagery_periods years must be unique")
+    if years != sorted(years):
+        errors.append("inputs.imagery_periods must be sorted from earliest to latest")
+    return result
+
+
 def validate(project_path: Path) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -112,10 +144,13 @@ def validate(project_path: Path) -> dict[str, Any]:
         engine = classification.get("engine")
         if engine not in VALID_ENGINES:
             errors.append(f"classification.engine must be one of {sorted(VALID_ENGINES)}")
+        periods = imagery_periods(inputs, base, input_roots, errors)
         imagery = inputs.get("imagery", [])
         if engine != "provided_lulc":
-            if not isinstance(imagery, list) or not imagery:
-                errors.append("classification requires inputs.imagery for ENVI or PyTorch classification")
+            if periods:
+                pass
+            elif not isinstance(imagery, list) or not imagery:
+                errors.append("classification requires inputs.imagery or inputs.imagery_periods for ENVI or PyTorch classification")
             else:
                 for index, item in enumerate(imagery):
                     required_path(f"imagery[{index}]", item, base, input_roots, errors)
@@ -145,8 +180,12 @@ def validate(project_path: Path) -> dict[str, Any]:
 
     if plus.get("enabled"):
         historical = inputs.get("historical_lulc", [])
-        if not isinstance(historical, list) or len(historical) < 2:
-            errors.append("PLUS requires at least two historical_lulc rasters for backcasting")
+        automatic_history = classification.get("enabled") and classification.get("engine") != "provided_lulc" and len(inputs.get("imagery_periods", [])) >= 2
+        if automatic_history:
+            # Paths and chronological years were checked in the classification block.
+            pass
+        elif not isinstance(historical, list) or len(historical) < 2:
+            errors.append("PLUS requires at least two historical_lulc rasters, or two or more inputs.imagery_periods for automatic classification")
         else:
             for index, item in enumerate(historical):
                 required_path(f"historical_lulc[{index}]", item, base, input_roots, errors)
@@ -178,7 +217,12 @@ def validate(project_path: Path) -> dict[str, Any]:
         if "RE" in scenario_codes:
             resource = plus.get("resource_extraction", {})
             errors.extend(re_contract_errors(resource, project_shorthand_allowed=True))
-            required_path("subsidence_depth_raster", inputs.get("subsidence_depth_raster"), base, input_roots, errors)
+            if inputs.get("subsidence_depth_raster"):
+                required_path("subsidence_depth_raster", inputs.get("subsidence_depth_raster"), base, input_roots, errors)
+            elif inputs.get("subsidence_w_dat"):
+                required_path("subsidence_w_dat", inputs.get("subsidence_w_dat"), base, input_roots, errors)
+            else:
+                errors.append("PLUS RE requires inputs.subsidence_depth_raster or inputs.subsidence_w_dat")
             if isinstance(resource, dict):
                 for factor in resource.get("additional_driver_factors", []):
                     if factor not in factors or not factors.get(factor):
@@ -189,8 +233,7 @@ def validate(project_path: Path) -> dict[str, Any]:
                         errors.append("PLUS RE w.dat source_unit must be m or mm")
                     if source.get("source_convention") not in {"negative_down", "positive_down"}:
                         errors.append("PLUS RE w.dat source_convention must be negative_down or positive_down")
-                    required_path("subsidence_w_dat", inputs.get("subsidence_w_dat"), base, input_roots, errors)
-                    warnings.append("RE uses the aligned positive subsidence-depth raster; w.dat remains the external source record.")
+                    warnings.append("RE will standardise and align w.dat to the latest LULC grid before PLUS starts.")
 
     if invest.get("enabled"):
         models = invest.get("models")
@@ -232,7 +275,12 @@ def validate(project_path: Path) -> dict[str, Any]:
             errors.append(f"subsidence_water.mode must be one of {sorted(VALID_SUBSIDENCE_WATER_MODES)}")
         if mode in {"estimate_volume", "composite_subsidence_water_carbon"}:
             required_path("dem", inputs.get("dem"), base, input_roots, errors)
-            required_path("subsidence_depth_raster", inputs.get("subsidence_depth_raster"), base, input_roots, errors)
+            if inputs.get("subsidence_depth_raster"):
+                required_path("subsidence_depth_raster", inputs.get("subsidence_depth_raster"), base, input_roots, errors)
+            elif inputs.get("subsidence_w_dat"):
+                required_path("subsidence_w_dat", inputs.get("subsidence_w_dat"), base, input_roots, errors)
+            else:
+                errors.append("subsidence volume requires subsidence_depth_raster or subsidence_w_dat")
             level = subsidence.get("water_level_elevation_m", inputs.get("water_surface_elevation_m"))
             if not isinstance(level, (int, float)):
                 errors.append("subsidence volume requires water_level_elevation_m")

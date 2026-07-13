@@ -95,13 +95,39 @@ def allowed_codes(scheme: str) -> list[int]:
     return list(range(1, 8 if scheme == "high_water_coal_7class" else 7))
 
 
+def configured_imagery_periods(inputs: dict[str, Any], base: Path) -> list[tuple[int, str]]:
+    """Return explicitly dated imagery, falling back to the legacy image list.
+
+    The fallback is suitable for a one-date classification only.  PLUS callers
+    are validated to use the explicit form because chronological order matters.
+    """
+    raw = inputs.get("imagery_periods")
+    if isinstance(raw, list) and raw:
+        return [(int(item["year"]), source_path(str(item["path"]), base) or "") for item in raw]
+    return [(index + 1, source_path(str(value), base) or "") for index, value in enumerate(inputs.get("imagery", [])) if value]
+
+
+def templated_output(value: str | None, default: str, year: int, workspace: Path, multi: bool) -> str:
+    """Keep a legacy single-date output stable and make multi-date outputs unique."""
+    if value and "{year}" in value:
+        return output_path(value.format(year=year), workspace)
+    if multi:
+        configured = Path(value or default)
+        suffix = configured.suffix or ".tif"
+        stem = configured.stem or "LULC"
+        return output_path(str(Path("outputs") / "lulc" / f"{stem}_{year}{suffix}"), workspace)
+    return output_path(value or default, workspace)
+
+
 def add_preflight(stages: list[dict[str, Any]], workspace: Path, inputs: dict[str, Any], base: Path,
                   classification: dict[str, Any], plus: dict[str, Any], subsidence: dict[str, Any]) -> str | None:
     datasets: list[dict[str, Any]] = []
     scheme = classification.get("scheme", "standard_6class")
     historical = [source_path(item, base) for item in inputs.get("historical_lulc", []) if item]
     baseline = source_path(inputs.get("lulc_baseline"), base)
-    imagery = [source_path(item, base) for item in inputs.get("imagery", []) if item]
+    periods = configured_imagery_periods(inputs, base)
+    imagery = [path for _, path in periods]
+    automatic_history = classification.get("enabled") and classification.get("engine") != "provided_lulc" and len(inputs.get("imagery_periods", [])) >= 2
     master: str | None = None
     if plus.get("enabled") and historical:
         master = "historical_lulc_latest"
@@ -112,8 +138,8 @@ def add_preflight(stages: list[dict[str, Any]], workspace: Path, inputs: dict[st
         master = "lulc_baseline"
         datasets.append({"name": master, "path": baseline, "kind": "lulc", "allowed_codes": allowed_codes(scheme), "must_align": True})
     elif classification.get("enabled") and imagery:
-        master = "imagery"
-        image_spec: dict[str, Any] = {"name": master, "path": imagery[0], "kind": "continuous", "must_align": False}
+        master = "imagery_latest"
+        image_spec: dict[str, Any] = {"name": master, "path": imagery[-1], "kind": "continuous", "must_align": False}
         if classification.get("engine") == "pytorch" and inputs.get("model_package"):
             try:
                 model = read_json(Path(source_path(inputs["model_package"], base)) / "model_config.json")
@@ -125,13 +151,21 @@ def add_preflight(stages: list[dict[str, Any]], workspace: Path, inputs: dict[st
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
         datasets.append(image_spec)
+        # Classifiers can consume native grids.  Their discrete outputs are
+        # subsequently aligned to the latest LULC grid before change analysis.
+        for year, image in periods[:-1]:
+            datasets.append({"name": f"imagery_{year}", "path": image, "kind": "continuous", "must_align": False})
     if plus.get("enabled"):
         for name, value in inputs.get("driver_factors", {}).items():
             if value:
-                datasets.append({"name": f"driver_{name}", "path": source_path(value, base), "kind": "continuous", "must_align": True})
+                # Raw factors may legitimately use another CRS/resolution.
+                # A later ArcGIS stage creates the aligned working copies and
+                # a second preflight verifies those copies before PLUS.
+                datasets.append({"name": f"driver_{name}", "path": source_path(value, base), "kind": "continuous",
+                                 "must_align": False})
         if inputs.get("subsidence_depth_raster"):
             datasets.append({"name": "subsidence_depth", "path": source_path(inputs["subsidence_depth_raster"], base),
-                             "kind": "subsidence_depth", "must_align": True,
+                             "kind": "subsidence_depth", "must_align": False,
                              "require_projected_meters": bool(subsidence.get("enabled"))})
     if subsidence.get("enabled") and subsidence.get("mode") in {"estimate_volume", "composite_subsidence_water_carbon"}:
         for name, value, kind in (("dem", inputs.get("dem"), "continuous"),
@@ -178,6 +212,53 @@ def lulc_validation_stage(stages: list[dict[str, Any],], identifier: str, lulc: 
     return identifier
 
 
+def historical_lulc_validation_stage(stages: list[dict[str, Any]], identifier: str, history: list[tuple[int, str]],
+                                     scheme: str, carbon: str | None, workspace: Path,
+                                     dependencies: list[str]) -> str:
+    """Assert all dated LULC products are pixel-identical before PLUS/Sankey."""
+    latest_year, latest = history[-1]
+    datasets = [{"name": f"lulc_{year}", "path": path, "kind": "lulc", "allowed_codes": allowed_codes(scheme),
+                 "must_align": True} for year, path in history]
+    datasets[-1]["name"] = "master_lulc"
+    spec = {"master": "master_lulc", "datasets": datasets, "carbon_density": carbon}
+    spec_path = workspace / "generated" / f"{identifier}.json"; report = workspace / "validation" / f"{identifier}.json"
+    write_json(spec_path, spec)
+    stages.append({"id": identifier, "adapter": "command", "enabled": True,
+                   "command": [sys.executable, str(ROOT / "scripts" / "spatial_preflight.py"), "--spec", str(spec_path),
+                               "--output", str(report)], "inputs": [path for _, path in history] + ([carbon] if carbon else []),
+                   "outputs": [str(report)], "depends_on": dependencies})
+    return identifier
+
+
+def add_transition_sankeys(stages: list[dict[str, Any]], history: list[tuple[int, str]], scheme: str,
+                           workspace: Path, dependencies: list[str]) -> list[str]:
+    results: list[str] = []
+    for (old_year, old), (new_year, new) in zip(history, history[1:]):
+        stem = f"{old_year}_{new_year}"
+        table = str(workspace / "outputs" / "transitions" / f"LULC_transition_{stem}.csv")
+        figure = str(workspace / "outputs" / "figures" / f"LULC_Sankey_{stem}.svg")
+        stage_id = f"lulc_sankey_{old_year}_{new_year}"
+        stages.append({"id": stage_id, "adapter": "command", "enabled": True,
+                       "command": [sys.executable, str(ROOT / "scripts" / "lulc_transition_sankey.py"),
+                                   "--from-raster", old, "--to-raster", new, "--from-year", str(old_year),
+                                   "--to-year", str(new_year), "--scheme", scheme, "--output-csv", table,
+                                   "--output-svg", figure],
+                       "inputs": [old, new], "outputs": [table, table + ".metadata.json", figure],
+                       "depends_on": dependencies.copy()})
+        results.append(stage_id)
+    return results
+
+
+def add_raster_map(stages: list[dict[str, Any]], identifier: str, raster: str, title: str, kind: str,
+                   scheme: str, workspace: Path, dependencies: list[str]) -> str:
+    output = str(workspace / "outputs" / "figures" / f"{identifier}.svg")
+    stages.append({"id": f"map_{identifier}", "adapter": "command", "enabled": True,
+                   "command": [sys.executable, str(ROOT / "scripts" / "raster_map_svg.py"), "--raster", raster,
+                               "--output", output, "--title", title, "--kind", kind, "--scheme", scheme],
+                   "inputs": [raster], "outputs": [output], "depends_on": dependencies.copy()})
+    return f"map_{identifier}"
+
+
 def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict[str, Any]:
     project_path = project_path.expanduser().resolve()
     report = validate(project_path)
@@ -201,69 +282,162 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
     lulc: str | None = source_path(inputs.get("lulc_baseline"), base)
     lulc_dependency = dependencies.copy()
 
+    lulc_history: list[tuple[int, str]] = []
     if classification.get("enabled"):
-        # A supplied LULC is an analysis input, not a classification output.
-        # Keeping its source path prevents the compiler from inventing an
-        # imagery dependency or trying to overwrite the user's raster.
-        if classification["engine"] == "provided_lulc":
+        # A supplied LULC is an analysis input.  A classifier, in contrast,
+        # runs once per explicitly dated image and never overwrites an earlier
+        # date's product.
+        engine, scheme = classification["engine"], classification["scheme"]
+        periods = configured_imagery_periods(inputs, base)
+        if engine == "provided_lulc":
             lulc = source_path(inputs["lulc_baseline"], base)
-        else:
-            lulc = output_path(classification.get("output_lulc", "outputs/lulc.tif"), workspace)
-        if classification["engine"] == "pytorch":
-            confidence = output_path(classification.get("output_confidence", "outputs/lulc_confidence.tif"), workspace)
-            low_confidence = output_path(classification["output_low_confidence"], workspace) if classification.get("output_low_confidence") else None
-            threshold = classification.get("low_confidence_threshold")
-            stages.append({"id": "classification_pytorch", "adapter": "command", "enabled": True,
-                "command": [sys.executable, str(ROOT / "scripts" / "pytorch_lulc.py"), "infer", "--model-package",
-                            source_path(inputs["model_package"], base), "--input-raster", source_path(inputs["imagery"][0], base),
-                            "--class-output", lulc, "--confidence-output", confidence] +
-                           (["--low-confidence-output", low_confidence] if low_confidence else []) +
-                           (["--low-confidence-threshold", str(threshold)] if threshold is not None else []),
-                "inputs": [source_path(inputs["model_package"], base), source_path(inputs["imagery"][0], base)],
-                "outputs": [item for item in [lulc, confidence, low_confidence] if item], "depends_on": dependencies.copy()})
-            classify_id = "classification_pytorch"
-        elif classification["engine"] == "envi":
-            method = classification.get("envi_method", "maximum_likelihood")
-            stages.append({"id": "classification_envi", "adapter": "envi", "enabled": True,
-                "batch_file": str(ROOT / "scripts" / ("envi_maximum_likelihood.pro" if method == "maximum_likelihood" else "envi_minimum_distance.pro")),
-                "entrypoint": "mining_envi_maximum_likelihood" if method == "maximum_likelihood" else "mining_envi_minimum_distance",
-                "env": {"MINING_INPUT_RASTER": source_path(inputs["imagery"][0], base),
-                        "MINING_TRAINING_VECTOR": source_path(inputs["training_roi"], base), "MINING_OUTPUT_RASTER": lulc},
-                "inputs": [source_path(inputs["imagery"][0], base), source_path(inputs["training_roi"], base)],
-                "outputs": [lulc], "depends_on": dependencies.copy()})
-            classify_id = "classification_envi"
-        else:
-            classify_id = "provided_lulc"
-        if classification["engine"] != "provided_lulc":
-            master = source_path(inputs["imagery"][0], base)
-            lulc_dependency = [lulc_validation_stage(stages, "lulc_output_validation", lulc, master,
-                                                      classification["scheme"], carbon, workspace, [classify_id])]
-        else:
             lulc_dependency = [lulc_validation_stage(stages, "lulc_output_validation", lulc, None,
-                                                      classification["scheme"], carbon, workspace, dependencies.copy())]
-        # Accuracy evaluation is meaningful for both newly classified and
-        # user-provided LULC rasters.  It remains conditional on independently
-        # supplied samples, rather than being silently skipped.
+                                                      scheme, carbon, workspace, dependencies.copy())]
+        else:
+            multi = len(periods) > 1
+            raw_history: list[tuple[int, str, str]] = []
+            for year, image in periods:
+                lulc_output = templated_output(classification.get("output_lulc"), "outputs/lulc.tif", year, workspace, multi)
+                suffix = f"_{year}" if multi else ""
+                if engine == "pytorch":
+                    confidence = templated_output(classification.get("output_confidence"), "outputs/lulc_confidence.tif", year, workspace, multi)
+                    low_confidence = (templated_output(classification.get("output_low_confidence"), "outputs/lulc_low_confidence.tif", year, workspace, multi)
+                                      if classification.get("output_low_confidence") else None)
+                    stage_id = f"classification_pytorch{suffix}"
+                    command = [sys.executable, str(ROOT / "scripts" / "pytorch_lulc.py"), "infer", "--model-package",
+                               source_path(inputs["model_package"], base), "--input-raster", image,
+                               "--class-output", lulc_output, "--confidence-output", confidence]
+                    if low_confidence:
+                        command += ["--low-confidence-output", low_confidence]
+                    if classification.get("low_confidence_threshold") is not None:
+                        command += ["--low-confidence-threshold", str(classification["low_confidence_threshold"])]
+                    stages.append({"id": stage_id, "adapter": "command", "enabled": True, "command": command,
+                                   "inputs": [source_path(inputs["model_package"], base), image],
+                                   "outputs": [item for item in [lulc_output, confidence, low_confidence] if item],
+                                   "depends_on": dependencies.copy()})
+                else:
+                    method = classification.get("envi_method", "maximum_likelihood")
+                    stage_id = f"classification_envi{suffix}"
+                    stages.append({"id": stage_id, "adapter": "envi", "enabled": True,
+                                   "batch_file": str(ROOT / "scripts" / ("envi_maximum_likelihood.pro" if method == "maximum_likelihood" else "envi_minimum_distance.pro")),
+                                   "entrypoint": "mining_envi_maximum_likelihood" if method == "maximum_likelihood" else "mining_envi_minimum_distance",
+                                   "env": {"MINING_INPUT_RASTER": image, "MINING_TRAINING_VECTOR": source_path(inputs["training_roi"], base),
+                                           "MINING_OUTPUT_RASTER": lulc_output},
+                                   "inputs": [image, source_path(inputs["training_roi"], base)], "outputs": [lulc_output],
+                                   "depends_on": dependencies.copy()})
+                validation_id = lulc_validation_stage(stages, f"lulc_output_validation{suffix}", lulc_output, image,
+                                                      scheme, carbon, workspace, [stage_id])
+                add_raster_map(stages, f"LULC_{year}", lulc_output, f"Land use / land cover {year}", "lulc", scheme,
+                               workspace, [validation_id])
+                raw_history.append((year, lulc_output, validation_id))
+            latest_year, latest_lulc, latest_validation = raw_history[-1]
+            lulc, lulc_dependency = latest_lulc, [latest_validation]
+            lulc_history = [(latest_year, latest_lulc)]
+            alignment_dependencies: list[str] = [latest_validation]
+            for year, raw_lulc, validation_id in raw_history[:-1]:
+                aligned = output_path(f"outputs/lulc/aligned/LULC_{year}.tif", workspace)
+                spec_path = workspace / "generated" / f"align_lulc_{year}.json"
+                write_json(spec_path, {"environment": {"overwriteOutput": False}, "operations": [{
+                    "id": f"align_lulc_{year}", "type": "align_raster", "input": raw_lulc, "master": latest_lulc,
+                    "output": aligned, "resampling": "NEAREST", "mask": source_path(inputs.get("mine_boundary"), base)}]})
+                align_id = f"align_lulc_{year}"
+                stages.append({"id": align_id, "adapter": "arcgis", "enabled": True, "spec": str(spec_path),
+                               "inputs": [raw_lulc, latest_lulc] + ([source_path(inputs["mine_boundary"], base)] if inputs.get("mine_boundary") else []),
+                               "outputs": [aligned], "depends_on": [validation_id, latest_validation]})
+                lulc_history.insert(0, (year, aligned)); alignment_dependencies.append(align_id)
+            if multi:
+                history_validation = historical_lulc_validation_stage(stages, "historical_lulc_preflight", lulc_history,
+                                                                       scheme, carbon, workspace, alignment_dependencies)
+                lulc_dependency = [history_validation]
+                add_transition_sankeys(stages, lulc_history, scheme, workspace, [history_validation])
+        if not lulc_history and lulc:
+            lulc_history = [(int(plus.get("baseline_year", 0) or 0), lulc)]
+        # Independent accuracy data is optional, but when present it follows
+        # the latest classified image automatically.
         accuracy = classification.get("accuracy", {})
         if accuracy.get("enabled"):
-            acc_output = output_path(accuracy["output"], workspace)
-            matrix = output_path(accuracy["confusion_matrix"], workspace)
+            acc_output = output_path(accuracy["output"], workspace); matrix = output_path(accuracy["confusion_matrix"], workspace)
             stages.append({"id": "lulc_accuracy", "adapter": "command", "enabled": True,
-                "command": [sys.executable, str(ROOT / "scripts" / "lulc_accuracy.py"), "--samples",
-                            source_path(accuracy["validation_samples"], base), "--reference-field", accuracy["reference_field"],
-                            "--prediction-field", accuracy["prediction_field"], "--output", acc_output,
-                            "--confusion-matrix", matrix] + (["--classification-raster", lulc, "--x-field", accuracy["x_field"],
-                            "--y-field", accuracy["y_field"]] if accuracy.get("x_field") and accuracy.get("y_field") else []) +
-                           (["--samples-crs", accuracy["samples_crs"]] if accuracy.get("samples_crs") else []),
-                "inputs": [source_path(accuracy["validation_samples"], base), lulc], "outputs": [acc_output, matrix],
-                "depends_on": lulc_dependency.copy()})
+                           "command": [sys.executable, str(ROOT / "scripts" / "lulc_accuracy.py"), "--samples",
+                                       source_path(accuracy["validation_samples"], base), "--reference-field", accuracy["reference_field"],
+                                       "--prediction-field", accuracy["prediction_field"], "--output", acc_output,
+                                       "--confusion-matrix", matrix] + (["--classification-raster", lulc, "--x-field", accuracy["x_field"],
+                                       "--y-field", accuracy["y_field"]] if accuracy.get("x_field") and accuracy.get("y_field") else []) +
+                                      (["--samples-crs", accuracy["samples_crs"]] if accuracy.get("samples_crs") else []),
+                           "inputs": [source_path(accuracy["validation_samples"], base), lulc], "outputs": [acc_output, matrix],
+                           "depends_on": lulc_dependency.copy()})
             lulc_dependency.append("lulc_accuracy")
+
+    # Convert raw drivers and the PIM depth product into exact working copies
+    # on the final LULC grid before PLUS or water-volume analysis begins.
+    provided_history = [(index + 1, source_path(value, base) or "") for index, value in enumerate(inputs.get("historical_lulc", [])) if value]
+    plus_history = lulc_history if len(lulc_history) >= 2 else provided_history
+    master_lulc = plus_history[-1][1] if plus_history else lulc
+    prepared_drivers: dict[str, str] = {name: source_path(value, base) or "" for name, value in inputs.get("driver_factors", {}).items() if value}
+    prepared_dependencies = lulc_dependency.copy() if lulc_dependency else dependencies.copy()
+    subsidence_depth = source_path(inputs.get("subsidence_depth_raster"), base)
+    if master_lulc and (plus.get("enabled") or subsidence.get("enabled")):
+        mask = source_path(inputs.get("mine_boundary"), base)
+        terrain_stage: str | None = None
+        dem_source = source_path(inputs.get("dem"), base) or prepared_drivers.get("dem")
+        if dem_source and ("slope" not in prepared_drivers or "aspect" not in prepared_drivers):
+            raw_slope, raw_aspect = str(workspace / "outputs" / "drivers" / "slope_raw.tif"), str(workspace / "outputs" / "drivers" / "aspect_raw.tif")
+            terrain_spec = workspace / "generated" / "derive_terrain.json"
+            write_json(terrain_spec, {"environment": {"overwriteOutput": False}, "operations": [{"id": "derive_terrain", "type": "slope_aspect",
+                        "input": dem_source, "slope_output": raw_slope, "aspect_output": raw_aspect,
+                        "output_measurement": "DEGREE", "z_unit": "METER"}]})
+            terrain_stage = "derive_terrain"
+            stages.append({"id": terrain_stage, "adapter": "arcgis", "enabled": True, "spec": str(terrain_spec),
+                           "inputs": [dem_source], "outputs": [raw_slope, raw_aspect], "depends_on": dependencies.copy()})
+            prepared_drivers.setdefault("slope", raw_slope); prepared_drivers.setdefault("aspect", raw_aspect)
+        aligned_stages: list[str] = []
+        for name, raw in list(prepared_drivers.items()):
+            aligned = str(workspace / "outputs" / "drivers" / f"{name}_aligned.tif")
+            spec_path = workspace / "generated" / f"align_driver_{name}.json"
+            write_json(spec_path, {"environment": {"overwriteOutput": False}, "operations": [{"id": f"align_driver_{name}", "type": "align_raster",
+                        "input": raw, "master": master_lulc, "output": aligned, "resampling": "BILINEAR", "mask": mask}]})
+            stage_id = f"align_driver_{name}"
+            deps = prepared_dependencies.copy() + ([terrain_stage] if terrain_stage and name in {"slope", "aspect"} else [])
+            stages.append({"id": stage_id, "adapter": "arcgis", "enabled": True, "spec": str(spec_path),
+                           "inputs": [raw, master_lulc] + ([mask] if mask else []), "outputs": [aligned], "depends_on": deps})
+            prepared_drivers[name] = aligned; aligned_stages.append(stage_id)
+        if inputs.get("subsidence_w_dat"):
+            source = plus.get("resource_extraction", {}).get("w_dat_preprocessing", {})
+            points, depth = str(workspace / "intermediate" / "subsidence_depth_points.csv"), str(workspace / "outputs" / "subsidence" / "subsidence_depth_aligned.tif")
+            stages.append({"id": "standardise_w_dat", "adapter": "command", "enabled": True,
+                           "command": [sys.executable, str(ROOT / "scripts" / "wdat_to_depth.py"), "--input", source_path(inputs["subsidence_w_dat"], base),
+                                       "--output", points, "--unit", str(source.get("source_unit", "m")), "--sign", str(source.get("source_convention", "positive_down"))],
+                           "inputs": [source_path(inputs["subsidence_w_dat"], base)], "outputs": [points], "depends_on": prepared_dependencies.copy()})
+            stages.append({"id": "rasterise_w_dat", "adapter": "command", "enabled": True,
+                           "command": [sys.executable, str(ROOT / "scripts" / "wdat_rasterize.py"), "--points", points, "--master", master_lulc, "--output", depth, "--fill-nearest"],
+                           "inputs": [points, master_lulc], "outputs": [depth, depth + ".metadata.json"], "depends_on": ["standardise_w_dat"]})
+            subsidence_depth = depth; aligned_stages.append("rasterise_w_dat")
+        elif subsidence_depth:
+            depth = str(workspace / "outputs" / "subsidence" / "subsidence_depth_aligned.tif")
+            spec_path = workspace / "generated" / "align_subsidence_depth.json"
+            write_json(spec_path, {"environment": {"overwriteOutput": False}, "operations": [{"id": "align_subsidence_depth", "type": "align_raster",
+                        "input": subsidence_depth, "master": master_lulc, "output": depth, "resampling": "BILINEAR", "mask": mask}]})
+            stages.append({"id": "align_subsidence_depth", "adapter": "arcgis", "enabled": True, "spec": str(spec_path),
+                           "inputs": [subsidence_depth, master_lulc] + ([mask] if mask else []), "outputs": [depth], "depends_on": prepared_dependencies.copy()})
+            subsidence_depth = depth; aligned_stages.append("align_subsidence_depth")
+        if plus.get("enabled") and plus_history:
+            dataset_entries = [{"name": "master_lulc", "path": master_lulc, "kind": "lulc", "allowed_codes": allowed_codes(classification.get("scheme", "standard_6class")), "must_align": False}]
+            dataset_entries += [{"name": f"driver_{name}", "path": path, "kind": "continuous", "must_align": True} for name, path in prepared_drivers.items()]
+            if subsidence_depth:
+                dataset_entries.append({"name": "subsidence_depth", "path": subsidence_depth, "kind": "subsidence_depth", "must_align": True})
+            spec_path, report_path = workspace / "generated" / "plus_input_preflight.json", workspace / "validation" / "plus_input_preflight.json"
+            write_json(spec_path, {"master": "master_lulc", "datasets": dataset_entries, "carbon_density": carbon})
+            stages.append({"id": "plus_input_preflight", "adapter": "command", "enabled": True,
+                           "command": [sys.executable, str(ROOT / "scripts" / "spatial_preflight.py"), "--spec", str(spec_path), "--output", str(report_path)],
+                           "inputs": [master_lulc, *prepared_drivers.values()] + ([subsidence_depth] if subsidence_depth else []), "outputs": [str(report_path)],
+                           "depends_on": aligned_stages or prepared_dependencies.copy()})
+            prepared_dependencies = ["plus_input_preflight"]
 
     if subsidence.get("enabled") and subsidence.get("mode") in {"estimate_volume", "composite_subsidence_water_carbon"}:
         mode = subsidence["mode"]
         level = subsidence.get("water_level_elevation_m", inputs.get("water_surface_elevation_m"))
         operation: dict[str, Any] = {"id": "subsidence_water", "type": "subsidence_water_volume" if mode == "estimate_volume" else "subsidence_water_carbon",
-            "dem": source_path(inputs["dem"], base), "subsidence_depth": source_path(inputs["subsidence_depth_raster"], base),
+            "dem": prepared_drivers.get("dem", source_path(inputs["dem"], base)), "subsidence_depth": subsidence_depth,
             "water_level_elevation_m": level, "water_depth_output": output_path(subsidence["output_depth_raster"], workspace),
             "volume_table": output_path(subsidence["output_volume_table"], workspace)}
         outputs = [operation["water_depth_output"], operation["volume_table"]]
@@ -291,13 +465,13 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
         write_json(spec_path, {"environment": {"overwriteOutput": False}, "operations": [operation]})
         stages.append({"id": "subsidence_water", "adapter": "arcgis", "enabled": True, "spec": str(spec_path),
                        "inputs": [operation["dem"], operation["subsidence_depth"]], "outputs": outputs,
-                       "depends_on": dependencies.copy()})
+                       "depends_on": prepared_dependencies.copy()})
 
     plus_outputs: dict[str, str] = {}
     plus_validation_dependencies: list[str] = []
     if plus.get("enabled"):
-        driver_factors = {name: source_path(value, base) for name, value in inputs.get("driver_factors", {}).items() if value}
-        historical = [source_path(value, base) for value in inputs.get("historical_lulc", [])]
+        driver_factors = prepared_drivers
+        historical = [path for _, path in plus_history]
         plus_root = Path(output_path(plus.get("output_workspace", "outputs/plus"), workspace))
         for raw_scenario in plus.get("scenarios", ["ND", "UD", "EP", "RE"]):
             scenario = str(raw_scenario).upper()
@@ -314,7 +488,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                 }}
             if scenario == "RE":
                 parameters["resource_extraction"] = canonical_re_contract(
-                    plus["resource_extraction"], source_path(inputs["subsidence_depth_raster"], base),
+                    plus["resource_extraction"], subsidence_depth,
                     lambda value: source_path(value, base) or value)
             request = {"protocol_version": "1.0", "request_id": stage_id, "operation": "plus.run_scenario",
                        "parameters": {"project": str(project_path), "scenario": scenario, "workspace": str(scenario_dir),
@@ -323,9 +497,11 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             if scenario == "RE":
                 stage_inputs.append(parameters["resource_extraction"]["core_driver_input"])
             stages.append({"id": stage_id, "adapter": "plus", "enabled": True, "request": request,
-                           "inputs": stage_inputs, "outputs": [str(expected)], "depends_on": dependencies.copy()})
+                           "inputs": stage_inputs, "outputs": [str(expected)], "depends_on": prepared_dependencies.copy()})
             validation_id = lulc_validation_stage(stages, f"plus_output_validation_{scenario}", str(expected), historical[-1],
                                                   classification.get("scheme", "standard_6class"), carbon, workspace, [stage_id])
+            add_raster_map(stages, f"PLUS_{scenario}", str(expected), f"PLUS {scenario} scenario", "lulc",
+                           classification.get("scheme", "standard_6class"), workspace, [validation_id])
             plus_outputs[scenario] = str(expected)
             plus_validation_dependencies.append(validation_id)
 
@@ -359,6 +535,10 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                                "inputs": [datastack, source_lulc] + ([carbon] if carbon else []),
                                "outputs": outputs, "service_field": str(model_config.get("service_field", INVEST_MODELS[model]["service_field"])),
                                "service_unit": model_config.get("service_unit"), "depends_on": dependency_by_scenario[scenario]})
+                for index, result_raster in enumerate(outputs):
+                    add_raster_map(stages, f"InVEST_{model}_{scenario}_{index + 1}", result_raster,
+                                   f"InVEST {model} {scenario}", "continuous", classification.get("scheme", "standard_6class"),
+                                   workspace, [stage_id])
                 invest_dependencies.append(stage_id)
                 if model == "carbon" and outputs:
                     invest_outputs[scenario] = outputs[0]

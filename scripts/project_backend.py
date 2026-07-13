@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from project_validator import validate  # noqa: E402
+from project_builder import build as build_project  # noqa: E402
 from project_workflow import compile_workflow  # noqa: E402
 from analysis_validation import validate_results  # noqa: E402
 from lulc_accuracy import evaluate as evaluate_lulc  # noqa: E402
@@ -23,10 +24,19 @@ def main() -> int:
     envelope = json.load(sys.stdin)
     if envelope.get("operation") == "system.capabilities":
         result = {"status": "completed", "result": {"backend": "project", "mode": "local-command", "operations": [
-            "system.capabilities", "project.validate", "project.compile_workflow", "project.run_workflow",
+            "system.capabilities", "project.build_from_inputs", "project.validate", "project.compile_workflow", "project.run_workflow",
             "project.prepare_plus_scenarios", "project.submit_workflow", "system.job_status", "system.cancel_job", "system.list_outputs",
             "analysis.validate_results", "analysis.lulc_accuracy", "analysis.plus_validation", "analysis.invest_consistency",
         ]}}
+    elif envelope.get("operation") == "project.build_from_inputs":
+        params = envelope["parameters"]
+        report = build_project(Path(params["output_project"]), params["project_id"], params["workspace"],
+                               params["imagery_periods"], params["driver_factors"], params["mine_boundary"],
+                               params["carbon_density"], w_dat=params.get("w_dat"), model_package=params.get("model_package"),
+                               training_roi=params.get("training_roi"), scheme=params.get("scheme", "high_water_coal_7class"),
+                               w_dat_unit=params.get("w_dat_unit"), w_dat_convention=params.get("w_dat_convention"))
+        result = {"status": "pending_validation" if report["pending_inputs"] else "completed", "result": report,
+                  "outputs": [report["project_file"]]}
     elif envelope.get("operation") == "project.validate":
         report = validate(Path(envelope["parameters"]["project_file"]).expanduser().resolve())
         result = {"status": "completed" if report["status"] == "valid" else "failed", "result": report,

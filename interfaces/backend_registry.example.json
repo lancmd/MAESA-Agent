@@ -30,7 +30,7 @@
     "project": {
       "transport": "command",
       "command": ["{python}", "{skill_root}/scripts/project_backend.py"],
-      "capabilities": ["project.validate", "project.compile_workflow", "project.run_workflow", "project.prepare_plus_scenarios", "project.submit_workflow", "system.job_status", "system.cancel_job", "system.list_outputs", "analysis.validate_results", "analysis.lulc_accuracy", "analysis.plus_validation", "analysis.invest_consistency"]
+      "capabilities": ["project.build_from_inputs", "project.validate", "project.compile_workflow", "project.run_workflow", "project.prepare_plus_scenarios", "project.submit_workflow", "system.job_status", "system.cancel_job", "system.list_outputs", "analysis.validate_results", "analysis.lulc_accuracy", "analysis.plus_validation", "analysis.invest_consistency"]
     },
     "ecosystem": {
       "transport": "command",

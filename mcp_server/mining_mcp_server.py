@@ -34,7 +34,7 @@ INPUT_PATH_KEYS = {"path", "project_file", "project", "datastack", "model_packag
                    "driver_factors", "mine_boundary", "roi", "training_roi", "subsidence_water_boundary"}
 OUTPUT_PATH_KEYS = {"output", "output_job", "workspace", "class_output", "confidence_output", "low_confidence_output",
                     "output_raster", "output_report", "expected_output", "output_directory", "water_depth_output",
-                    "volume_table", "carbon_table", "pdf", "png", "aprx_output", "validation_output", "model_workspace"}
+                    "volume_table", "carbon_table", "pdf", "png", "aprx_output", "validation_output", "model_workspace", "output_project"}
 
 
 def allowed_input_roots() -> list[Path]:
@@ -238,6 +238,22 @@ def inspect_dataset(path: str, backend: str = "arcgis") -> str:
 def validate_local_project(project_file: str, backend: str = "project") -> str:
     """Validate all local imagery, ROI, carbon-density, driver-factor and optional subsidence inputs before execution."""
     return json_result(registry.call(backend, "project.validate", {"project_file": project_file}))
+
+
+@mcp.tool()
+def build_local_project_from_inputs(output_project: str, project_id: str, workspace: str,
+                                    imagery_periods: list[dict[str, Any]], driver_factors: dict[str, str],
+                                    mine_boundary: str, carbon_density: str, w_dat: str | None = None,
+                                    model_package: str | None = None, training_roi: str | None = None,
+                                    scheme: str = "high_water_coal_7class", w_dat_unit: str | None = None,
+                                    w_dat_convention: str | None = None, backend: str = "project") -> str:
+    """Build a local multi-date project from supplied data paths; use a PyTorch model package or ENVI ROI for classification."""
+    return json_result(registry.call(backend, "project.build_from_inputs", {
+        "output_project": output_project, "project_id": project_id, "workspace": workspace,
+        "imagery_periods": imagery_periods, "driver_factors": driver_factors, "mine_boundary": mine_boundary,
+        "carbon_density": carbon_density, "w_dat": w_dat, "model_package": model_package, "training_roi": training_roi,
+        "scheme": scheme, "w_dat_unit": w_dat_unit, "w_dat_convention": w_dat_convention,
+    }))
 
 
 @mcp.tool()

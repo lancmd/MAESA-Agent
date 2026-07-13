@@ -9,6 +9,7 @@
   },
   "inputs": {
     "imagery": [],
+    "imagery_periods": [],
     "roi": null,
     "mine_boundary": null,
     "carbon_density": null,
