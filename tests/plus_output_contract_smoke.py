@@ -41,9 +41,14 @@ with tempfile.TemporaryDirectory() as temporary:
         output = root / "ND" / "PLUS_ND.tif"
         output.write_bytes(b"II*\x00local plus output")
         result = adopt_existing_output(nd)
-        assert result and result["status"] == "completed" and result["outputs"] == [str(output)], result
+        assert result and result["status"] == "completed", result
+        # Windows runner temp directories may arrive in 8.3 form but be
+        # normalised to their long path by Path.resolve().  Compare the file
+        # identity rather than two spellings of the same local path.
+        assert [Path(item).resolve() for item in result["outputs"]] == [output.resolve()], result
         bridge_result = normalize_bridge_result(nd, {"status": "completed", "outputs": [str(output)]})
-        assert bridge_result["status"] == "completed" and bridge_result["outputs"] == [str(output)], bridge_result
+        assert bridge_result["status"] == "completed", bridge_result
+        assert [Path(item).resolve() for item in bridge_result["outputs"]] == [output.resolve()], bridge_result
     finally:
         if prior_output_root is None:
             os.environ.pop("MINING_PLUS_OUTPUT_ROOT", None)
