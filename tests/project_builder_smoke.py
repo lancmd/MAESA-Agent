@@ -22,10 +22,13 @@ with tempfile.TemporaryDirectory() as temporary:
     result = build(target, "builder-smoke", "runtime", [{"year": 2020, "path": str(root / "image_2020.tif")},
                     {"year": 2025, "path": str(root / "image_2025.tif")}], {"dem": str(root / "dem.tif")},
                    str(root / "boundary.shp"), str(root / "carbon.csv"), w_dat=str(root / "w.dat"),
-                   training_roi=str(root / "roi.gpkg"), w_dat_unit="mm", w_dat_convention="negative_down")
+                   training_roi=str(root / "roi.gpkg"), classification_sensor="Sentinel-2",
+                   w_dat_unit="mm", w_dat_convention="negative_down")
     project = json.loads(target.read_text(encoding="utf-8"))
     assert result["imagery_years"] == [2020, 2025]
     assert project["classification"]["engine"] == "envi"
+    assert project["classification"]["sensor"] == "sentinel_2_msi"
+    assert [item["sensor"] for item in project["inputs"]["imagery_periods"]] == ["sentinel_2_msi", "sentinel_2_msi"]
     assert project["plus"]["scenarios"] == ["ND", "UD", "EP", "RE"]
     direct = build(root / "generated" / "depth-project.json", "builder-depth", "runtime-depth",
                    [{"year": 2020, "path": str(root / "image_2020.tif")}, {"year": 2025, "path": str(root / "image_2025.tif")}],

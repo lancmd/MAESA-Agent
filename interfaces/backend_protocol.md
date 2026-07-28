@@ -37,6 +37,8 @@ MCP 服务运行在用户机器上，并把结构化任务交给本机软件进�
 | `pytorch.validate_model` / `pytorch.run_lulc_inference` | PyTorch | 校验模型包与分块推理 |
 | `plus.run_scenario` | PLUS 本地桥接器 | 运行 ND、UD、EP、RE；无桥接器时生成任务包 |
 | `invest.run_carbon` / `invest.run_model` | InVEST | 运行 Carbon、水源供给或生境质量 |
+| `invest.build_habitat_datastack` | InVEST | 从 LULC、威胁栅格和用户给定的敏感性参数构建并校验 Habitat Quality 数据栈 |
+| `invest.validate_carbon_density` | InVEST | 校验 Carbon 四碳库字段、数值、LULC 缺失类别与表中多出类别 |
 | `project.validate` / `project.compile_workflow` / `project.run_workflow` | 项目后端 | 校验、编译并运行本地项目 |
 | `analysis.validate_results` | 项目后端 | 汇总分析与地图验收证据 |
 | `analysis.lulc_accuracy` / `analysis.plus_validation` | 项目后端 | 计算分类精度、FoM 和多种子稳定性 |

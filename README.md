@@ -72,7 +72,12 @@ python .\scripts\project_validator.py --project .\project.json
 python .\scripts\project_workflow.py --project .\project.json --run
 ```
 
-The compiler generates `workspace/generated/workflow_job.json`; users do not maintain a separate job file. See [the input contract](docs/agent_input_contract.md) and [the synthetic demo](examples/huaibei_demo/README.md).
+For a controlled natural-language route from a reviewed data inventory to
+`project.json`, see [Copilot project creation](docs/copilot_project_creation.md).
+Sensor-specific Landsat/Sentinel defaults and local ENVI XML/GeoJSON ROI
+checks are documented in [classification profiles and ROI quality](docs/classification_profiles_and_roi.md).
+
+The compiler generates `workspace/generated/workflow_job.json`; users do not maintain a separate job file. See [the input contract](docs/agent_input_contract.md), the [compact synthetic demo](examples/huaibei_demo/README.md), and the [six-period classification/InVEST demo](examples/anonymous_six_period/README.md).
 
 ## LLM Copilot
 
@@ -103,6 +108,8 @@ Enable only the modules you need. The usual full chain needs:
 - optional ArcGIS Pro `.aprx`, layout and `.lyrx` files for publication maps.
 
 The project fixes a 30 m projected analysis grid. Ten metre categorical LULC is aggregated by majority; continuous drivers use bilinear resampling; aspect uses nearest-neighbour treatment.
+
+For `classification_invest`, every imagery period carries its own training ROI and a separate validation sample table. Validation samples include reference class, x/y coordinates and their CRS, so OA, F1 and IoU are sampled from the LULC raster produced for that same period rather than read from a prefilled prediction column.
 
 The registered ResNet-50 package is an RGB **image/patch classifier**, not a pixel-wise segmentation network. Its output is an explicit coarse patch grid that aggregates to the ordinary six-class scheme and remains `pending_validation`. See [the PyTorch model guide](deep_learning/pytorch_workflow.md) before using it in a project.
 
@@ -153,12 +160,13 @@ MAESA-Agent/
 ├── arcgis_steps/           # ArcGIS Pro processing and layout rules
 ├── envi_classification/    # ENVI classification rules
 ├── examples/huaibei_demo/  # anonymous synthetic demo
+├── examples/anonymous_six_period/ # six-period classification/InVEST contract demo
 └── tests/                  # portable and local integration checks
 ```
 
 ## License and scope
 
-MAESA-Agent 0.2.1 is released under the [MIT License](LICENSE). The license covers this repository's source code and documentation only. MAESA orchestrates installed software; it does not redistribute ArcGIS Pro, ENVI, PLUS or InVEST licenses, nor does it fabricate model inputs or scientific conclusions. Use independently validated data, documented coefficients and appropriate software licenses for research results.
+MAESA-Agent 0.3.0 is released under the [MIT License](LICENSE). The license covers this repository's source code and documentation only. MAESA orchestrates installed software; it does not redistribute ArcGIS Pro, ENVI, PLUS or InVEST licenses, nor does it fabricate model inputs or scientific conclusions. Use independently validated data, documented coefficients and appropriate software licenses for research results.
 
 ### Optional real ResNet-50 integration test
 

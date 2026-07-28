@@ -1,0 +1,14 @@
+{
+  "example_kind": "synthetic_contract_demo",
+  "scientific_result": false,
+  "description": "Outputs declared by the six-period workflow compiler. They become real files only after licensed local ENVI and InVEST backends run successfully.",
+  "periods": [2000, 2005, 2010, 2015, 2020, 2025],
+  "declared_products": [
+    {"kind": "lulc", "path": "runtime/outputs/lulc/LULC_{year}.tif", "stage": "classification_envi_{year}"},
+    {"kind": "classification_accuracy", "path": "runtime/outputs/validation/lulc_accuracy_{year}.json", "stage": "lulc_accuracy_{year}"},
+    {"kind": "carbon_storage", "path": "runtime/outputs/invest/carbon/{year}", "stage": "invest_carbon_{year}"},
+    {"kind": "habitat_quality", "path": "runtime/outputs/invest/habitat_quality/{year}", "stage": "invest_habitat_quality_{year}"},
+    {"kind": "trend_table", "path": "runtime/outputs/statistics/invest_multiperiod_summary.csv", "stage": "invest_multiperiod_summary"},
+    {"kind": "trend_figure", "path": "runtime/outputs/figures/invest_multiperiod_change.svg", "stage": "invest_multiperiod_summary"}
+  ]
+}

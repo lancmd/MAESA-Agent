@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MAESA controlled project-creation plan",
+  "type": "object",
+  "required": ["schema_version", "kind", "purpose", "input_manifest", "output_project", "workspace", "build_arguments", "confirmation_required"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "maesa_project_creation_plan"},
+    "purpose": {"type": "string", "minLength": 1},
+    "input_manifest": {"type": "string", "minLength": 1},
+    "output_project": {"type": "string", "minLength": 1},
+    "workspace": {"type": "string", "minLength": 1},
+    "build_arguments": {"type": "object"},
+    "expected_inputs": {"type": "array", "items": {"type": "string"}},
+    "expected_outputs": {"type": "array", "items": {"type": "string"}},
+    "confirmation_required": {"const": true}
+  },
+  "additionalProperties": false
+}

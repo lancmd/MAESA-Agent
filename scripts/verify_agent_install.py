@@ -21,8 +21,14 @@ REQUIRED_FILES = (
     "scripts/start_agent_mcp.ps1",
     "scripts/project_workflow.py",
     "scripts/analysis_validation.py",
+    "scripts/classification_backend.py",
+    "scripts/classification_profiles.py",
+    "scripts/roi_quality.py",
+    "scripts/carbon_density_contract.py",
+    "scripts/invest_datastack_builder.py",
+    "schemas/maesa_project_creation_plan.schema.json",
 )
-REQUIRED_BACKENDS = {"envi", "plus", "arcgis", "invest", "pytorch", "project", "ecosystem"}
+REQUIRED_BACKENDS = {"envi", "plus", "arcgis", "invest", "pytorch", "classification", "project", "ecosystem"}
 
 
 def local_http(url: str) -> bool:

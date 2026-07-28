@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "project_id": "anonymous-six-period-demo",
+  "task_type": "classification_invest",
+  "workspace": "runtime",
+  "security": {"input_roots": ["data"], "output_root": "runtime"},
+  "inputs": {
+    "imagery": [],
+    "imagery_periods": [
+      {"year": 2000, "path": "data/imagery_2000.tif", "sensor": "landsat_5_tm", "training_roi": "data/roi_2000.geojson", "accuracy": {"enabled": true, "validation_samples": "data/accuracy_2000.csv", "reference_field": "reference", "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}},
+      {"year": 2005, "path": "data/imagery_2005.tif", "sensor": "landsat_5_tm", "training_roi": "data/roi_2005.geojson", "accuracy": {"enabled": true, "validation_samples": "data/accuracy_2005.csv", "reference_field": "reference", "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}},
+      {"year": 2010, "path": "data/imagery_2010.tif", "sensor": "landsat_5_tm", "training_roi": "data/roi_2010.geojson", "accuracy": {"enabled": true, "validation_samples": "data/accuracy_2010.csv", "reference_field": "reference", "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}},
+      {"year": 2015, "path": "data/imagery_2015.tif", "sensor": "landsat_8_oli", "training_roi": "data/roi_2015.geojson", "accuracy": {"enabled": true, "validation_samples": "data/accuracy_2015.csv", "reference_field": "reference", "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}},
+      {"year": 2020, "path": "data/imagery_2020.tif", "sensor": "sentinel_2_msi", "training_roi": "data/roi_2020.geojson", "accuracy": {"enabled": true, "validation_samples": "data/accuracy_2020.csv", "reference_field": "reference", "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}},
+      {"year": 2025, "path": "data/imagery_2025.tif", "sensor": "sentinel_2_msi", "training_roi": "data/roi_2025.geojson", "accuracy": {"enabled": true, "validation_samples": "data/accuracy_2025.csv", "reference_field": "reference", "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}}
+    ],
+    "lulc_baseline": null,
+    "historical_lulc": [],
+    "training_roi": null,
+    "model_package": null,
+    "carbon_density": "data/carbon_density.csv",
+    "driver_factors": {}
+  },
+  "classification": {
+    "enabled": true,
+    "engine": "envi",
+    "scheme": "high_water_coal_7class",
+    "envi_method": "maximum_likelihood",
+    "output_lulc": "outputs/lulc/LULC_{year}.tif",
+    "output_confidence": "outputs/lulc/confidence_{year}.tif",
+    "accuracy": {"enabled": false},
+    "roi_quality": {"enabled": true, "class_field": "class_id", "role_field": "sample_role", "training_value": "training", "validation_value": "validation", "expected_classes": [1, 2, 3, 4, 5, 6, 7], "minimum_rois_per_class": 1, "output": "outputs/validation/roi_quality_{year}.json"}
+  },
+  "plus": {"enabled": false},
+  "invest": {
+    "enabled": true,
+    "output_workspace": "outputs/invest",
+    "multiperiod_summary": {"enabled": true, "output_table": "outputs/statistics/invest_multiperiod_summary.csv", "output_figure": "outputs/figures/invest_multiperiod_change.svg"},
+    "models": {
+      "carbon": {"enabled": true, "service_unit": "Mg C"},
+      "habitat_quality": {"enabled": true, "datastack_builder": "data/habitat_quality.json", "service_field": "habitat_quality", "service_unit": "index_0_to_1", "service_aggregation": "mean"}
+    }
+  },
+  "subsidence_water": {"enabled": false},
+  "ecosystem_service": {"enabled": false},
+  "gis_outputs": {"enabled": false},
+  "validation": {"enabled": false}
+}

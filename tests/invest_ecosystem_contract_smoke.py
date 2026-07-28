@@ -8,6 +8,10 @@ import tempfile
 from pathlib import Path
 import sys
 
+import numpy as np
+import rasterio
+from rasterio.transform import from_origin
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -17,8 +21,13 @@ from scenario_service_table import raster_total  # noqa: E402
 
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    for name in ("lulc.tif", "precip.tif", "eto.tif", "root.tif", "pawc.tif", "watersheds.gpkg", "threat.tif"):
+    for name in ("precip.tif", "eto.tif", "root.tif", "pawc.tif", "watersheds.gpkg"):
         (root / name).write_bytes(b"fixture")
+    profile = {"driver": "GTiff", "width": 2, "height": 2, "count": 1, "dtype": "int16",
+               "crs": "EPSG:32650", "transform": from_origin(500000, 3700060, 30, 30), "nodata": -9999}
+    for name, values in (("lulc.tif", [[1, 1], [1, 1]]), ("threat.tif", [[1, 0], [0, 1]])):
+        with rasterio.open(root / name, "w", **profile) as sink:
+            sink.write(np.array(values, dtype="int16"), 1)
     (root / "bio.csv").write_text("lucode,root_depth,Kc,lulc_veg\n1,1000,0.8,1\n", encoding="utf-8")
     (root / "threats.csv").write_text("threat,max_dist,weight,decay,cur_path\nroad,1000,1,linear,threat.tif\n", encoding="utf-8")
     (root / "sensitivity.csv").write_text("lulc,habitat,road\n1,1,0.5\n", encoding="utf-8")
@@ -30,9 +39,6 @@ with tempfile.TemporaryDirectory() as temporary:
     (root / "awy.json").write_text(json.dumps(awy), encoding="utf-8"); (root / "habitat.json").write_text(json.dumps(habitat), encoding="utf-8")
     assert validate("annual_water_yield", root / "awy.json")["status"] == "completed"
     assert validate("habitat_quality", root / "habitat.json")["status"] == "completed"
-    import numpy as np  # type: ignore
-    import rasterio  # type: ignore
-    from rasterio.transform import from_origin  # type: ignore
     raster = root / "water_yield.tif"
     with rasterio.open(raster, "w", driver="GTiff", width=2, height=2, count=1, dtype="float32", crs="EPSG:32650",
                        transform=from_origin(0, 60, 30, 30), nodata=-9999) as dst:

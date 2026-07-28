@@ -19,12 +19,17 @@
     "invest": {
       "transport": "command",
       "command": ["{python}", "{skill_root}/scripts/local_backend.py", "--backend", "invest"],
-      "capabilities": ["invest.run_carbon", "invest.run_model"]
+      "capabilities": ["invest.run_carbon", "invest.run_model", "invest.build_habitat_datastack", "invest.validate_carbon_density"]
     },
     "pytorch": {
       "transport": "command",
       "command": ["{python}", "{skill_root}/scripts/pytorch_backend.py"],
       "capabilities": ["pytorch.validate_model", "pytorch.run_lulc_inference"]
+    },
+    "classification": {
+      "transport": "command",
+      "command": ["{python}", "{skill_root}/scripts/classification_backend.py"],
+      "capabilities": ["classification.sensor_parameters", "classification.roi_quality"]
     },
     "project": {
       "transport": "command",

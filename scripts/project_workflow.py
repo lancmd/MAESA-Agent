@@ -11,7 +11,8 @@ from typing import Any
 
 from path_safety import PathSafetyError, require_within, resolved, resolve_output
 from plus_contract import canonical_re_contract, expected_plus_raster
-from project_validator import validate
+from project_validator import (imagery_period_accuracy, imagery_period_sensor_profile,
+                               imagery_period_training_roi, validate)
 from spatial_contract import parse_driver_factors
 
 
@@ -127,6 +128,87 @@ def scenario_datastack(model: str, config: dict[str, Any], lulc: str, carbon_tab
     return carbon_datastack(lulc, carbon_table, output)
 
 
+HABITAT_CONFIG_PATH_KEYS = {
+    "lulc_path", "sensitivity_table_path", "access_vector_path", "raster", "current_raster", "future_raster",
+    "cur_path", "fut_path", "base_path", "path",
+}
+
+
+def habitat_config_paths(value: Any, base: Path, key: str = "") -> Any:
+    """Make inline Habitat Quality configuration references stable after compilation."""
+    if isinstance(value, dict):
+        return {str(name): habitat_config_paths(item, base, str(name)) for name, item in value.items()}
+    if isinstance(value, list):
+        return [habitat_config_paths(item, base, key) for item in value]
+    if isinstance(value, str) and key in HABITAT_CONFIG_PATH_KEYS:
+        return source_path(value, base) or value
+    return value
+
+
+def habitat_config_inputs(value: Any, base: Path, key: str = "") -> list[str]:
+    """Record declared Habitat Quality inputs in provenance, including threat rasters."""
+    if isinstance(value, dict):
+        return [path for name, item in value.items() for path in habitat_config_inputs(item, base, str(name))]
+    if isinstance(value, list):
+        return [path for item in value for path in habitat_config_inputs(item, base, key)]
+    # The builder always replaces its source ``lulc_path`` with the dated
+    # classified map.  A template may therefore leave it blank or use an
+    # illustrative placeholder; neither should become a runtime input.
+    if key == "lulc_path":
+        return []
+    if isinstance(value, str) and key in HABITAT_CONFIG_PATH_KEYS:
+        return [source_path(value, base) or value]
+    return []
+
+
+def habitat_builder_stage(stages: list[dict[str, Any]], stage_id: str, model_config: dict[str, Any],
+                          lulc: str, base: Path, workspace: Path,
+                          dependencies: list[str]) -> tuple[str, str]:
+    """Generate a dated Habitat Quality datastack after its LULC has materialised."""
+    supplied = model_config.get("datastack_builder")
+    config_inputs: list[str] = []
+    if isinstance(supplied, str):
+        config = source_path(supplied, base)
+        config_inputs = [config]
+        try:
+            config_inputs.extend(habitat_config_inputs(read_json(Path(config)), Path(config).parent))
+        except (OSError, ValueError, json.JSONDecodeError):
+            # The builder emits the authoritative configuration diagnostic at
+            # runtime.  Keep the source configuration itself in provenance.
+            pass
+    elif isinstance(supplied, dict):
+        source_config = supplied.get("config") or supplied.get("config_file")
+        if source_config:
+            config = source_path(str(source_config), base)
+            config_inputs = [config]
+            try:
+                config_inputs.extend(habitat_config_inputs(read_json(Path(config)), Path(config).parent))
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+            # The referenced JSON owns its relative paths, so retain it rather
+            # than serialising a duplicate from an uncertain working base.
+        else:
+            config = str(workspace / "generated" / f"{stage_id}_habitat_config.json")
+            payload = habitat_config_paths(supplied, base)
+            write_json(Path(config), payload)
+            config_inputs = habitat_config_inputs(supplied, base) + [config]
+    else:
+        raise ValueError("habitat_quality.datastack_builder must be a config path or object")
+    output_dir = workspace / "generated" / f"{stage_id}_habitat"
+    datastack = workspace / "generated" / f"{stage_id}_datastack.json"
+    report = workspace / "validation" / f"{stage_id}_habitat_builder.json"
+    builder_id = f"{stage_id}_datastack_builder"
+    stages.append({"id": builder_id, "adapter": "command", "enabled": True,
+                   "command": [sys.executable, str(ROOT / "scripts" / "invest_datastack_builder.py"),
+                               "--config", config, "--lulc", lulc, "--output-dir", str(output_dir),
+                               "--datastack", str(datastack), "--output", str(report)],
+                   "inputs": [lulc, *config_inputs],
+                   "outputs": [str(datastack), str(report), str(output_dir / "habitat_datastack_manifest.json"),
+                               str(output_dir / "habitat_threats.csv"), str(output_dir / "habitat_sensitivity.csv")],
+                   "depends_on": dependencies.copy()})
+    return str(datastack), builder_id
+
+
 def allowed_codes(scheme: str) -> list[int]:
     return list(range(1, 8 if scheme == "high_water_coal_7class" else 7))
 
@@ -139,17 +221,40 @@ def configured_imagery_periods(inputs: dict[str, Any], base: Path) -> list[tuple
     """
     raw = inputs.get("imagery_periods")
     if isinstance(raw, list) and raw:
-        return [(int(item["year"]), source_path(str(item["path"]), base) or "") for item in raw]
+        return sorted([(int(item["year"]), source_path(str(item["path"]), base) or "") for item in raw],
+                      key=lambda item: item[0])
     return [(index + 1, source_path(str(value), base) or "") for index, value in enumerate(inputs.get("imagery", [])) if value]
+
+
+def configured_imagery_period_details(inputs: dict[str, Any], base: Path) -> list[tuple[int, str, dict[str, Any]]]:
+    """Keep dated ROI and accuracy metadata attached to the image it belongs to."""
+    raw = inputs.get("imagery_periods")
+    if isinstance(raw, list) and raw:
+        return sorted([(int(item["year"]), source_path(str(item["path"]), base) or "", dict(item)) for item in raw],
+                      key=lambda item: item[0])
+    return [(year, path, {}) for year, path in configured_imagery_periods(inputs, base)]
 
 
 def configured_lulc_periods(inputs: dict[str, Any], base: Path) -> list[tuple[int, str]]:
     """Read dated supplied LULC products while retaining legacy list support."""
     periods = inputs.get("historical_lulc_periods")
     if isinstance(periods, list) and periods:
-        return [(int(item["year"]), source_path(str(item["path"]), base) or "") for item in periods]
+        return sorted([(int(item["year"]), source_path(str(item["path"]), base) or "") for item in periods],
+                      key=lambda item: item[0])
     return [(index + 1, source_path(str(value), base) or "")
             for index, value in enumerate(inputs.get("historical_lulc", [])) if value]
+
+
+def classification_profile_artifact(profile: dict[str, Any], year: int, workspace: Path) -> str:
+    """Persist the resolved ENVI profile so it is hashable workflow input.
+
+    Profile resolution happens before a GUI/software stage is launched.  A
+    separate JSON artifact keeps the exact sensor band contract visible in the
+    compiled job, validation evidence and provenance manifest.
+    """
+    target = workspace / "generated" / "classification_profiles" / f"classification_profile_{year}.json"
+    write_json(target, profile)
+    return str(target)
 
 
 def templated_output(value: str | None, default: str, year: int, workspace: Path, multi: bool) -> str:
@@ -164,11 +269,27 @@ def templated_output(value: str | None, default: str, year: int, workspace: Path
     return output_path(value or default, workspace)
 
 
+def dated_artifact_output(value: str | None, default: str, year: int, workspace: Path, multi: bool) -> str:
+    """Create a unique validation artefact path without assuming a LULC folder."""
+    rendered = (value or default).format(year=year)
+    if not multi:
+        return output_path(rendered, workspace)
+    configured = Path(rendered)
+    # A user may provide a concrete dated filename rather than a ``{year}``
+    # template.  Preserve that name rather than creating ``..._2000_2000``.
+    if f"_{year}" in configured.stem:
+        return output_path(str(configured), workspace)
+    suffix = configured.suffix or ".json"
+    stem = configured.stem or "artifact"
+    return output_path(str(configured.parent / f"{stem}_{year}{suffix}"), workspace)
+
+
 def add_preflight(stages: list[dict[str, Any]], workspace: Path, inputs: dict[str, Any], base: Path,
                   classification: dict[str, Any], plus: dict[str, Any], subsidence: dict[str, Any]) -> str | None:
     datasets: list[dict[str, Any]] = []
     scheme = classification.get("scheme", "standard_6class")
-    historical = [source_path(item, base) for item in inputs.get("historical_lulc", []) if item]
+    historical_periods = configured_lulc_periods(inputs, base)
+    historical = [path for _, path in historical_periods]
     baseline = source_path(inputs.get("lulc_baseline"), base)
     periods = configured_imagery_periods(inputs, base)
     imagery = [path for _, path in periods]
@@ -229,6 +350,11 @@ def add_preflight(stages: list[dict[str, Any]], workspace: Path, inputs: dict[st
                         ("subsidence_water_boundary", inputs.get("subsidence_water_boundary"))):
         if value:
             datasets.append({"name": name, "path": source_path(value, base), "kind": "vector", "require_crs": True})
+    for year, _, period in configured_imagery_period_details(inputs, base):
+        dated_roi = imagery_period_training_roi(period)
+        if dated_roi:
+            datasets.append({"name": f"training_roi_{year}", "path": source_path(dated_roi, base),
+                             "kind": "vector", "require_crs": True})
     if not datasets:
         return None
     vertical_datum: dict[str, Any] = {}
@@ -264,10 +390,80 @@ def lulc_validation_stage(stages: list[dict[str, Any],], identifier: str, lulc: 
     return identifier
 
 
+def lulc_accuracy_stage(stages: list[dict[str, Any]], identifier: str, lulc: str,
+                        accuracy: dict[str, Any], workspace: Path, base: Path,
+                        dependencies: list[str], year: int | None = None, multi: bool = False,
+                        require_raster_sampling: bool = False) -> str:
+    """Compile an independent accuracy assessment for one classified image.
+
+    For a generated ``classification_invest`` LULC, predictions are sampled
+    directly from that stage's raster.  This prevents a prefilled prediction
+    column in the reference CSV from becoming disconnected evidence.
+    """
+    default_output = "outputs/validation/lulc_accuracy.json"
+    default_matrix = "outputs/validation/lulc_confusion_matrix.csv"
+    if year is None:
+        output = output_path(str(accuracy["output"]), workspace)
+        matrix = output_path(str(accuracy["confusion_matrix"]), workspace)
+    else:
+        output = dated_artifact_output(accuracy.get("output"), default_output, year, workspace, multi)
+        matrix = dated_artifact_output(accuracy.get("confusion_matrix"), default_matrix, year, workspace, multi)
+    command = [sys.executable, str(ROOT / "scripts" / "lulc_accuracy.py"), "--samples",
+               source_path(accuracy["validation_samples"], base), "--reference-field", accuracy["reference_field"],
+               "--prediction-field", accuracy["prediction_field"], "--output", output,
+               "--confusion-matrix", matrix]
+    if require_raster_sampling:
+        command += ["--classification-raster", lulc, "--x-field", accuracy["x_field"], "--y-field", accuracy["y_field"],
+                    "--samples-crs", accuracy["samples_crs"], "--require-raster-sampling"]
+    elif accuracy.get("x_field") and accuracy.get("y_field"):
+        command += ["--classification-raster", lulc, "--x-field", accuracy["x_field"], "--y-field", accuracy["y_field"]]
+    if accuracy.get("samples_crs") and not require_raster_sampling:
+        command += ["--samples-crs", accuracy["samples_crs"]]
+    samples = source_path(accuracy["validation_samples"], base)
+    stages.append({"id": identifier, "adapter": "command", "enabled": True, "command": command,
+                   "inputs": [samples, lulc], "outputs": [output, matrix], "depends_on": dependencies.copy()})
+    return identifier
+
+
+def roi_quality_stage(stages: list[dict[str, Any]], identifier: str, roi: str,
+                      quality: dict[str, Any], workspace: Path, base: Path,
+                      dependencies: list[str], year: int, multi: bool,
+                      require_training_only: bool = False) -> str:
+    """Check one dated supervised ROI before handing it to ENVI.
+
+    This deliberately records sample coverage and possible train/validation
+    overlap without claiming that a healthy ROI count is classification
+    accuracy.  XML, GeoJSON, CSV and local vector readers are handled by the
+    shared checker; a period can override the global class/role fields.
+    """
+    output = dated_artifact_output(quality.get("output"), "outputs/validation/roi_quality.json", year, workspace, multi)
+    command = [sys.executable, str(ROOT / "scripts" / "roi_quality.py"), "--roi", source_path(roi, base),
+               "--class-field", str(quality.get("class_field", "class_id")),
+               "--minimum-rois-per-class", str(quality.get("minimum_rois_per_class", 30)),
+               "--max-class-imbalance-ratio", str(quality.get("max_class_imbalance_ratio", 10.0)),
+               "--output", output]
+    if quality.get("role_field"):
+        command.extend(["--role-field", str(quality["role_field"])])
+        command.extend(["--training-value", str(quality.get("training_value", "training"))])
+        command.extend(["--validation-value", str(quality.get("validation_value", "validation"))])
+    if require_training_only:
+        command.append("--require-training-only")
+    if quality.get("sample_count_field"):
+        command.extend(["--sample-count-field", str(quality["sample_count_field"])])
+    expected = quality.get("expected_classes", [])
+    if isinstance(expected, list):
+        for value in expected:
+            command.extend(["--expected-class", str(value)])
+    stages.append({"id": identifier, "adapter": "command", "enabled": True, "command": command,
+                   "inputs": [source_path(roi, base)], "outputs": [output], "depends_on": dependencies.copy()})
+    return identifier
+
+
 def historical_lulc_validation_stage(stages: list[dict[str, Any]], identifier: str, history: list[tuple[int, str]],
                                      scheme: str, carbon: str | None, workspace: Path,
                                      dependencies: list[str]) -> str:
     """Assert all dated LULC products are pixel-identical before PLUS/Sankey."""
+    history = sorted(history, key=lambda item: item[0])
     latest_year, latest = history[-1]
     datasets = [{"name": f"lulc_{year}", "path": path, "kind": "lulc", "allowed_codes": allowed_codes(scheme),
                  "must_align": True, "expected_cell_size_m": 30} for year, path in history]
@@ -284,6 +480,9 @@ def historical_lulc_validation_stage(stages: list[dict[str, Any]], identifier: s
 
 def add_transition_sankeys(stages: list[dict[str, Any]], history: list[tuple[int, str]], scheme: str,
                            workspace: Path, dependencies: list[str]) -> list[str]:
+    # Never infer chronology from the path or caller's list order.  The year
+    # is the scientific time key for a transition and for its Sankey labels.
+    history = sorted(history, key=lambda item: item[0])
     results: list[str] = []
     for (old_year, old), (new_year, new) in zip(history, history[1:]):
         stem = f"{old_year}_{new_year}"
@@ -324,6 +523,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
     except PathSafetyError as error:
         raise ValueError("workflow_job must be written inside the project workspace") from error
     inputs = project["inputs"]
+    task_type = project.get("task_type")
     classification, plus, invest = project.get("classification", {}), project.get("plus", {}), project.get("invest", {})
     subsidence, ecosystem = project.get("subsidence_water", {}), project.get("ecosystem_service", {})
     gis_outputs, validation_config = project.get("gis_outputs", {}), project.get("validation", {})
@@ -340,7 +540,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
         # runs once per explicitly dated image and never overwrites an earlier
         # date's product.
         engine, scheme = classification["engine"], classification["scheme"]
-        periods = configured_imagery_periods(inputs, base)
+        periods = configured_imagery_period_details(inputs, base)
         if engine == "provided_lulc":
             lulc = source_path(inputs["lulc_baseline"], base)
             lulc_dependency = [lulc_validation_stage(stages, "lulc_output_validation", lulc, None,
@@ -348,9 +548,11 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
         else:
             multi = len(periods) > 1
             raw_history: list[tuple[int, str, str]] = []
-            for year, image in periods:
+            for year, image, period in periods:
                 lulc_output = templated_output(classification.get("output_lulc"), "outputs/lulc.tif", year, workspace, multi)
                 suffix = f"_{year}" if multi else ""
+                period_accuracy = imagery_period_accuracy(period, year)
+                strict_accuracy = task_type == "classification_invest" and bool(period_accuracy.get("enabled"))
                 if engine == "pytorch":
                     confidence = templated_output(classification.get("output_confidence"), "outputs/lulc_confidence.tif", year, workspace, multi)
                     low_confidence = (templated_output(classification.get("output_low_confidence"), "outputs/lulc_low_confidence.tif", year, workspace, multi)
@@ -379,20 +581,45 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                                    "outputs": [item for item in [lulc_output, confidence, low_confidence] if item],
                                    "depends_on": dependencies.copy()})
                 else:
-                    method = classification.get("envi_method", "maximum_likelihood")
+                    resolved_profile = imagery_period_sensor_profile(period, classification)
+                    method = resolved_profile["classification_method"]["method"]
+                    profile_path = classification_profile_artifact(resolved_profile, year, workspace)
                     stage_id = f"classification_envi{suffix}"
+                    dated_roi = imagery_period_training_roi(period) or inputs.get("training_roi")
+                    roi_path = source_path(dated_roi, base)
+                    quality_config: dict[str, Any] = {}
+                    global_quality = classification.get("roi_quality")
+                    period_quality = period.get("roi_quality")
+                    if isinstance(global_quality, dict):
+                        quality_config.update(global_quality)
+                    if isinstance(period_quality, dict):
+                        quality_config.update(period_quality)
+                    quality_dependencies = dependencies.copy()
+                    if quality_config.get("enabled", True) is not False or strict_accuracy:
+                        quality_id = roi_quality_stage(stages, f"roi_quality_{year}", dated_roi, quality_config,
+                                                       workspace, base, dependencies.copy(), year, multi,
+                                                       require_training_only=strict_accuracy)
+                        quality_dependencies = [quality_id]
                     stages.append({"id": stage_id, "adapter": "envi", "enabled": True,
                                    "batch_file": str(ROOT / "scripts" / ("envi_maximum_likelihood.pro" if method == "maximum_likelihood" else "envi_minimum_distance.pro")),
                                    "entrypoint": "mining_envi_maximum_likelihood" if method == "maximum_likelihood" else "mining_envi_minimum_distance",
-                                   "env": {"MINING_INPUT_RASTER": image, "MINING_TRAINING_VECTOR": source_path(inputs["training_roi"], base),
-                                           "MINING_OUTPUT_RASTER": lulc_output},
-                                   "inputs": [image, source_path(inputs["training_roi"], base)], "outputs": [lulc_output],
-                                   "depends_on": dependencies.copy()})
+                                   "env": {"MINING_INPUT_RASTER": image, "MINING_TRAINING_VECTOR": roi_path,
+                                           "MINING_OUTPUT_RASTER": lulc_output,
+                                           "MINING_CLASSIFICATION_PROFILE": profile_path},
+                                   "classification_profile": resolved_profile,
+                                   "classification_profile_path": profile_path,
+                                   "inputs": [image, roi_path, profile_path], "outputs": [lulc_output],
+                                   "depends_on": quality_dependencies})
                 validation_id = lulc_validation_stage(stages, f"lulc_output_validation{suffix}", lulc_output, image,
                                                       scheme, carbon, workspace, [stage_id])
+                if period_accuracy.get("enabled"):
+                    validation_id = lulc_accuracy_stage(stages, f"lulc_accuracy_{year}", lulc_output, period_accuracy,
+                                                        workspace, base, [validation_id], year=year, multi=multi,
+                                                        require_raster_sampling=strict_accuracy)
                 add_raster_map(stages, f"LULC_{year}", lulc_output, f"Land use / land cover {year}", "lulc", scheme,
                                workspace, [validation_id])
                 raw_history.append((year, lulc_output, validation_id))
+            raw_history.sort(key=lambda item: item[0])
             latest_year, latest_lulc, latest_validation = raw_history[-1]
             # The analysis grid is intentionally fixed at 30 m even if the
             # classifier receives 10 m Sentinel imagery.  Categorical data is
@@ -432,22 +659,13 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
         # the latest classified image automatically.
         accuracy = classification.get("accuracy", {})
         if accuracy.get("enabled"):
-            acc_output = output_path(accuracy["output"], workspace); matrix = output_path(accuracy["confusion_matrix"], workspace)
-            stages.append({"id": "lulc_accuracy", "adapter": "command", "enabled": True,
-                           "command": [sys.executable, str(ROOT / "scripts" / "lulc_accuracy.py"), "--samples",
-                                       source_path(accuracy["validation_samples"], base), "--reference-field", accuracy["reference_field"],
-                                       "--prediction-field", accuracy["prediction_field"], "--output", acc_output,
-                                       "--confusion-matrix", matrix] + (["--classification-raster", lulc, "--x-field", accuracy["x_field"],
-                                       "--y-field", accuracy["y_field"]] if accuracy.get("x_field") and accuracy.get("y_field") else []) +
-                                      (["--samples-crs", accuracy["samples_crs"]] if accuracy.get("samples_crs") else []),
-                           "inputs": [source_path(accuracy["validation_samples"], base), lulc], "outputs": [acc_output, matrix],
-                           "depends_on": lulc_dependency.copy()})
+            lulc_accuracy_stage(stages, "lulc_accuracy", lulc, accuracy, workspace, base, lulc_dependency.copy())
             lulc_dependency.append("lulc_accuracy")
 
     # Convert raw LULC products to the common 30 m analysis grid.  This covers
     # supplied historical maps as well as maps produced by a classifier above.
     provided_history = configured_lulc_periods(inputs, base)
-    raw_history = lulc_history or provided_history
+    raw_history = sorted(lulc_history or provided_history, key=lambda item: item[0])
     if not raw_history and lulc:
         raw_history = [(int(plus.get("baseline_year", 0) or 0), lulc)]
     if raw_history and not any(stage["id"] == "analysis_master_grid" for stage in stages):
@@ -636,6 +854,12 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
     invest_outputs: dict[str, str] = {}
     invest_service_outputs: dict[str, dict[str, str]] = {}
     invest_dependencies: list[str] = []
+    # Keep time-series products separate from PLUS scenarios.  A year label is
+    # deliberately retained as a string elsewhere in the workflow because
+    # InVEST output folders use it directly; this map is only for the final
+    # six-period statistics table and trend figure.
+    historical_service_outputs: dict[int, dict[str, str]] = {}
+    historical_service_dependencies: list[str] = []
     if invest.get("enabled"):
         # Carbon and other InVEST models run for every dated historical LULC,
         # then for every completed PLUS scenario.  Historical products remain
@@ -654,16 +878,24 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             for scenario, source_lulc in lulc_sources.items():
                 suffix = "" if scenario == "baseline" else f"_{scenario}"
                 stage_id = f"invest_{model}{suffix}"
-                datastack = scenario_datastack(model, model_config, source_lulc, carbon, base,
-                                               workspace / "generated" / f"{stage_id}_datastack.json")
+                model_dependencies = dependency_by_scenario[scenario]
+                if model == "habitat_quality" and model_config.get("datastack_builder") is not None:
+                    datastack, builder_id = habitat_builder_stage(stages, stage_id, model_config, source_lulc,
+                                                                   base, workspace, model_dependencies)
+                    model_dependencies = [builder_id]
+                else:
+                    datastack = scenario_datastack(model, model_config, source_lulc, carbon, base,
+                                                   workspace / "generated" / f"{stage_id}_datastack.json")
                 model_workspace = Path(output_path(invest.get("output_workspace", "outputs/invest"), workspace)) / model / scenario
                 configured_outputs = model_config.get("expected_outputs")
                 if configured_outputs is None:
-                    configured_outputs = [INVEST_MODELS[model]["default_output"]] if INVEST_MODELS[model]["default_output"] else []
+                    if model == "habitat_quality" and model_config.get("datastack_builder") is not None:
+                        configured_outputs = ["quality_c.tif"]
+                    else:
+                        configured_outputs = [INVEST_MODELS[model]["default_output"]] if INVEST_MODELS[model]["default_output"] else []
                 if not isinstance(configured_outputs, list) or any(not isinstance(item, str) or not item for item in configured_outputs):
                     raise ValueError(f"invest.models.{model}.expected_outputs must be a list of non-empty relative paths")
                 outputs = [str((model_workspace / item).resolve()) for item in configured_outputs]
-                model_dependencies = dependency_by_scenario[scenario]
                 if model != "carbon":
                     contract = str(workspace / "validation" / f"{stage_id}_input_contract.json")
                     contract_id = f"{stage_id}_input_contract"
@@ -689,6 +921,43 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                 if outputs:
                     service_field = str(model_config.get("service_field", INVEST_MODELS[model]["service_field"]))
                     invest_service_outputs.setdefault(scenario, {})[service_field] = outputs[0]
+                    if str(scenario).isdigit() and service_field in {"carbon_storage_t_c", "habitat_quality"}:
+                        historical_service_outputs.setdefault(int(scenario), {})[service_field] = outputs[0]
+                        historical_service_dependencies.append(stage_id)
+
+    # Historical carbon storage is additive while Habitat Quality is an index.
+    # The summary command preserves that distinction, uses valid-cell area for
+    # its mean, and writes both a table and a portable SVG suitable for a
+    # thesis/report.  This is enabled by default whenever at least two dated
+    # products exist; users can disable it explicitly for a partial run.
+    summary_config = invest.get("multiperiod_summary", {}) if isinstance(invest.get("multiperiod_summary", {}), dict) else {}
+    summary_enabled = summary_config.get("enabled", True) is not False
+    summary_services = {service for services in historical_service_outputs.values() for service in services}
+    dated_services = {service for service in summary_services
+                      if sum(1 for services in historical_service_outputs.values() if service in services) >= 2}
+    if summary_enabled and dated_services:
+        summary_table = output_path(summary_config.get("output_table", "outputs/statistics/invest_multiperiod_summary.csv"), workspace)
+        summary_figure = output_path(summary_config.get("output_figure", "outputs/figures/invest_multiperiod_change.svg"), workspace)
+        summary_command = [sys.executable, str(ROOT / "scripts" / "multiperiod_invest_summary.py"),
+                           "--output-csv", summary_table, "--output-svg", summary_figure]
+        for year in sorted(historical_service_outputs):
+            for service, raster in sorted(historical_service_outputs[year].items()):
+                if service in dated_services:
+                    summary_command.extend(["--service-raster", f"{year}={service}={raster}"])
+        for model, model_config in enabled_invest_models(invest).items():
+            field = str(model_config.get("service_field", INVEST_MODELS[model]["service_field"]))
+            if field not in dated_services:
+                continue
+            aggregation = str(model_config.get("service_aggregation", INVEST_MODELS[model].get("service_aggregation", "sum")))
+            summary_command.extend(["--aggregation", f"{field}={aggregation}"])
+            if model_config.get("service_unit"):
+                summary_command.extend(["--unit", f"{field}={model_config['service_unit']}"])
+        stages.append({"id": "invest_multiperiod_summary", "adapter": "command", "enabled": True,
+                       "command": summary_command,
+                       "inputs": [raster for year in sorted(historical_service_outputs)
+                                  for service, raster in historical_service_outputs[year].items() if service in dated_services],
+                       "outputs": [summary_table, summary_table + ".metadata.json", summary_figure],
+                       "depends_on": sorted(set(historical_service_dependencies))})
 
     ecosystem_dependencies: list[str] = []
     if ecosystem.get("enabled"):

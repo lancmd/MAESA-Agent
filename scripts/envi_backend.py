@@ -17,6 +17,7 @@ from typing import Any
 
 from path_safety import PathSafetyError, is_unc, require_within
 from workflow_agent import ROOT, probe_software
+from classification_profiles import profile as resolve_classification_profile, supported_sensors
 
 
 METHODS = {
@@ -59,6 +60,7 @@ def capabilities(envelope: dict[str, Any]) -> dict[str, Any]:
         "local_only": True,
         "operations": ["system.capabilities", "envi.supervised_classification"],
         "methods": sorted(METHODS),
+        "supported_sensors": supported_sensors(),
         "limitation": None if item["available"] else "Configure IDL_EXE or config/local_paths.json after installing licensed ENVI.",
     })
 
@@ -68,6 +70,13 @@ def classify(envelope: dict[str, Any]) -> dict[str, Any]:
     method = str(params.get("method", "maximum_likelihood")).strip().lower()
     if method not in METHODS:
         return response(envelope, "failed", error=f"unsupported ENVI method: {method}")
+    try:
+        classification_profile = resolve_classification_profile(
+            str(params.get("sensor", "")), method,
+            str(params.get("scheme", "high_water_coal_7class")),
+        )
+    except ValueError as error:
+        return response(envelope, "failed", error=str(error))
     idl = probe_software()["software"]["idl"]["path"]
     if not idl:
         return response(envelope, "failed", error="ENVI/IDL is unavailable; configure a licensed local IDL executable")
@@ -80,13 +89,19 @@ def classify(envelope: dict[str, Any]) -> dict[str, Any]:
         return response(envelope, "failed", error=str(error))
     if output_raster.exists() and not bool(params.get("confirm_overwrite")):
         return response(envelope, "failed", error=f"existing output needs confirm_overwrite: {output_raster}")
+    profile_path = output_raster.with_suffix(output_raster.suffix + ".classification_profile.json")
+    if profile_path.exists() and not bool(params.get("confirm_overwrite")):
+        return response(envelope, "failed", error=f"existing profile needs confirm_overwrite: {profile_path}")
     batch_name, entrypoint = METHODS[method]
     batch = ROOT / "scripts" / batch_name
     environment = os.environ.copy()
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(json.dumps(classification_profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     environment.update({
         "MINING_INPUT_RASTER": str(input_raster),
         "MINING_TRAINING_VECTOR": str(training_vector),
         "MINING_OUTPUT_RASTER": str(output_raster),
+        "MINING_CLASSIFICATION_PROFILE": str(profile_path),
     })
     output_raster.parent.mkdir(parents=True, exist_ok=True)
     expression = f".run '{batch.as_posix()}' & {entrypoint} & exit"
@@ -103,8 +118,9 @@ def classify(envelope: dict[str, Any]) -> dict[str, Any]:
         return response(envelope, "failed", error=f"ENVI/IDL returned {process.returncode}", log=str(log))
     if not output_raster.exists():
         return response(envelope, "failed", error="ENVI/IDL exited without creating the requested classification raster", log=str(log))
-    return response(envelope, "completed", outputs=[str(output_raster)], log=str(log), result={
+    return response(envelope, "completed", outputs=[str(output_raster), str(profile_path)], log=str(log), result={
         "method": method, "input_raster": str(input_raster), "training_vector": str(training_vector),
+        "classification_profile": classification_profile, "classification_profile_file": str(profile_path),
     })
 
 

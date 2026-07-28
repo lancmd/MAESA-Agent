@@ -1,0 +1,16 @@
+{
+  "half_saturation_constant": 0.5,
+  "n_workers": -1,
+  "results_suffix": "",
+  "access_vector_path": null,
+  "threats": [
+    {
+      "name": "road",
+      "raster": "data/threats/road_30m.tif",
+      "max_distance_m": 1000,
+      "weight": 1.0,
+      "decay": "linear"
+    }
+  ],
+  "sensitivity_table_path": "data/habitat_sensitivity.csv"
+}

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RegionsOfInterest>
+  <Region name="water">
+    <GeometryDef><Polygon><Point x="1" y="1"/><Point x="2" y="1"/><Point x="1" y="2"/></Polygon></GeometryDef>
+    <GeometryDef><Polygon><Point x="3" y="3"/><Point x="4" y="3"/><Point x="3" y="4"/></Polygon></GeometryDef>
+  </Region>
+  <Region name="built_up">
+    <GeometryDef><Polygon><Point x="5" y="5"/><Point x="6" y="5"/><Point x="5" y="6"/></Polygon></GeometryDef>
+  </Region>
+</RegionsOfInterest>

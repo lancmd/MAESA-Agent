@@ -349,11 +349,31 @@ class JobRunner:
         executable = self.probe["software"]["idl"]["path"]
         batch = self.stage_path(stage.get("batch_file", "scripts/envi_maximum_likelihood.pro"))
         entrypoint = stage.get("entrypoint", "mining_envi_maximum_likelihood")
+        profile_path: Path | None = None
+        profile_payload: dict[str, Any] | None = None
+        raw_profile = stage.get("env", {}).get("MINING_CLASSIFICATION_PROFILE")
+        if raw_profile:
+            profile_path = self.stage_path(str(raw_profile))
+            if not profile_path.is_file():
+                raise RuntimeError(f"ENVI classification profile is missing: {profile_path}")
+            try:
+                profile_payload = load_json(profile_path)
+            except (OSError, json.JSONDecodeError) as error:
+                raise RuntimeError(f"cannot read ENVI classification profile: {error}") from error
+            declared = stage.get("classification_profile")
+            if isinstance(declared, dict) and declared != profile_payload:
+                raise RuntimeError("ENVI classification profile artifact differs from the compiled stage contract")
+            if not isinstance(profile_payload.get("sensor_id"), str) or not profile_payload.get("sensor_id"):
+                raise RuntimeError("ENVI classification profile has no canonical sensor_id")
         env = os.environ.copy()
         env.update({str(key): str(self.stage_path(value)) for key, value in stage.get("env", {}).items()})
         expression = f".run '{batch.as_posix()}' & {entrypoint} & exit"
-        return self.command(stage["id"], [executable, "-e", expression], env=env,
-                            timeout_seconds=stage.get("timeout_seconds"), retries=stage.get("retries", 0))
+        result = self.command(stage["id"], [executable, "-e", expression], env=env,
+                              timeout_seconds=stage.get("timeout_seconds"), retries=stage.get("retries", 0))
+        if profile_payload is not None and profile_path is not None:
+            result["classification_profile"] = profile_payload
+            result["classification_profile_file"] = str(profile_path)
+        return result
 
     def run_plus(self, stage: dict[str, Any]) -> dict[str, Any]:
         if stage.get("request"):

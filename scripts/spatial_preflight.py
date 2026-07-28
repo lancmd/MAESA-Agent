@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import os
@@ -12,6 +11,8 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from carbon_density_contract import compare_code_sets, validate_table
 
 
 def _rasterio_info(path: Path) -> dict[str, Any]:
@@ -136,24 +137,6 @@ def _same_grid(master: dict[str, Any], item: dict[str, Any]) -> bool:
     return all(math.isclose(float(a), float(b), rel_tol=1e-10, abs_tol=tolerance) for a, b in zip(left, right))
 
 
-def _carbon_codes(path: Path) -> set[int]:
-    with path.open("r", encoding="utf-8-sig", newline="") as stream:
-        rows = list(csv.DictReader(stream))
-    if not rows or "lucode" not in rows[0]:
-        raise ValueError("carbon density table must contain lucode")
-    codes: list[int] = []
-    for row in rows:
-        code = int(float(row.get("lucode", "")))
-        codes.append(code)
-        for field, value in row.items():
-            if field.startswith("c_") and (not value or not math.isfinite(float(value)) or float(value) < 0):
-                raise ValueError(f"carbon density {field} for lucode {code} must be a finite non-negative number")
-    duplicates = sorted({item for item in codes if codes.count(item) > 1})
-    if duplicates:
-        raise ValueError(f"carbon density table has duplicate lucode values: {duplicates}")
-    return set(codes)
-
-
 def validate(spec: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     checks: list[str] = []
@@ -256,17 +239,29 @@ def validate(spec: dict[str, Any]) -> dict[str, Any]:
     elif master_name:
         errors.append(f"master dataset was not inspected: {master_name}")
     carbon_path = spec.get("carbon_density")
+    carbon_coverage: dict[str, Any] = {}
     lulc_names = [str(item.get("name")) for item in datasets if item.get("kind") == "lulc"]
     if carbon_path and lulc_names:
         try:
-            carbon_codes = _carbon_codes(Path(str(carbon_path)).expanduser().resolve())
+            table = validate_table(Path(str(carbon_path)).expanduser().resolve())
+            if table["status"] != "completed":
+                errors.extend("carbon density: " + message for message in table["errors"])
             for name in lulc_names:
                 values = inspected.get(name, {}).get("values")
-                if values is not None:
-                    missing = sorted(set(values) - carbon_codes)
-                    if missing:
-                        errors.append(f"{name}: carbon density has no lucode for {missing}")
-            checks.append("carbon-density coverage")
+                if values is None:
+                    warnings.append(f"{name}: carbon-density comparison is unavailable because unique values could not be enumerated")
+                    continue
+                comparison = compare_code_sets(set(values), set(table["codes"]),
+                                               require_exact_codes=bool(spec.get("carbon_density_require_exact_codes", False)))
+                carbon_coverage[name] = {
+                    "lulc_codes": sorted(set(values)), "carbon_codes": table["codes"],
+                    "missing_carbon_codes": comparison["missing_carbon_codes"],
+                    "extra_carbon_codes": comparison["extra_carbon_codes"],
+                }
+                errors.extend(f"{name}: {message}" for message in comparison["errors"])
+                warnings.extend(f"{name}: {message}" for message in comparison["warnings"])
+            if table["status"] == "completed":
+                checks.append("carbon-density coverage")
         except Exception as error:
             errors.append(f"carbon density: {error}")
     datum = spec.get("vertical_datum", {})
@@ -279,7 +274,7 @@ def validate(spec: dict[str, Any]) -> dict[str, Any]:
         else:
             checks.append("vertical datum")
     return {"status": "failed" if errors else "completed", "checks": checks, "warnings": warnings, "errors": errors,
-            "datasets": inspected, "master": master_name}
+            "datasets": inspected, "master": master_name, "carbon_density": carbon_coverage}
 
 
 def main() -> int:

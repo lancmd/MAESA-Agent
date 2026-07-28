@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any
+
+from carbon_density_contract import lulc_codes
 
 
 REQUIRED: dict[str, tuple[str, ...]] = {
@@ -35,10 +38,122 @@ def headers(path: Path) -> set[str]:
         return set(csv.DictReader(stream).fieldnames or [])
 
 
+def rows(path: Path) -> list[dict[str, str]]:
+    """Read a parameter table with case-insensitive field lookup."""
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        return [{str(key).casefold(): value or "" for key, value in row.items() if key is not None}
+                for row in csv.DictReader(stream)]
+
+
 def missing_headers(actual: set[str], required: set[str]) -> set[str]:
     """Compare InVEST table headers case-insensitively without rewriting them."""
     present = {value.casefold() for value in actual}
     return {value for value in required if value.casefold() not in present}
+
+
+def finite(value: Any, label: str, *, positive: bool = False, bounded: bool = False) -> float:
+    try:
+        result = float(str(value).strip())
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label} is not a number") from error
+    if not math.isfinite(result):
+        raise ValueError(f"{label} must be finite")
+    if positive and result <= 0:
+        raise ValueError(f"{label} must be positive")
+    if bounded and not 0 <= result <= 1:
+        raise ValueError(f"{label} must be between 0 and 1")
+    return result
+
+
+def integer(value: Any, label: str) -> int:
+    result = finite(value, label)
+    if not result.is_integer():
+        raise ValueError(f"{label} must be an integer")
+    return int(result)
+
+
+def aligned(reference: Path, candidate: Path) -> bool:
+    """InVEST does not make an unaligned threat raster scientifically valid."""
+    import rasterio  # type: ignore
+    with rasterio.open(reference) as left, rasterio.open(candidate) as right:
+        if left.width != right.width or left.height != right.height:
+            return False
+        if not left.crs or not right.crs or left.crs != right.crs:
+            return False
+        return all(math.isclose(float(a), float(b), rel_tol=1e-10, abs_tol=1e-8)
+                   for a, b in zip(left.transform, right.transform))
+
+
+def habitat_checks(args: dict[str, Any], datastack: Path, errors: list[str], warnings: list[str]) -> None:
+    """Validate Habitat Quality tables, values, codes, and threat-grid alignment."""
+    threats = resolve(args.get("threats_table_path"), datastack.parent)
+    sensitivity = resolve(args.get("sensitivity_table_path"), datastack.parent)
+    lulc = resolve(args.get("lulc_cur_path"), datastack.parent)
+    threat_headers = headers(threats) if threats else set()
+    sensitivity_headers = headers(sensitivity) if sensitivity else set()
+    missing_threat = missing_headers(threat_headers, {"threat", "max_dist", "weight", "decay", "cur_path"})
+    if missing_threat:
+        errors.append("Habitat Quality threats table misses: " + ", ".join(sorted(missing_threat)))
+    missing_sensitivity = missing_headers(sensitivity_headers, {"lulc", "habitat"})
+    if missing_sensitivity:
+        errors.append("Habitat Quality sensitivity table misses: " + ", ".join(sorted(missing_sensitivity)))
+    if not (threats and sensitivity and lulc) or missing_threat or missing_sensitivity:
+        return
+    try:
+        threat_rows = rows(threats)
+        sensitivity_rows = rows(sensitivity)
+        if not threat_rows:
+            raise ValueError("Habitat Quality threats table contains no rows")
+        if not sensitivity_rows:
+            raise ValueError("Habitat Quality sensitivity table contains no rows")
+        names: set[str] = set()
+        for index, row in enumerate(threat_rows, start=2):
+            name = row.get("threat", "").strip()
+            if not name:
+                raise ValueError(f"Habitat Quality threats row {index} has an empty threat")
+            if name in names:
+                raise ValueError(f"Habitat Quality threats table has duplicate threat: {name}")
+            names.add(name)
+            finite(row.get("max_dist"), f"Habitat Quality threats row {index} max_dist", positive=True)
+            finite(row.get("weight"), f"Habitat Quality threats row {index} weight", positive=True)
+            if row.get("decay", "").strip().casefold() not in {"linear", "exponential"}:
+                raise ValueError(f"Habitat Quality threats row {index} decay must be linear or exponential")
+            for field, label in (("cur_path", "current"), ("fut_path", "future"), ("base_path", "baseline")):
+                value = row.get(field, "").strip()
+                if not value:
+                    continue
+                raster = resolve(value, threats.parent)
+                if raster is None or not raster.exists():
+                    raise ValueError(f"Habitat Quality {label} threat raster does not exist for {name}: {raster}")
+                if not aligned(lulc, raster):
+                    raise ValueError(f"Habitat Quality {label} threat raster is not aligned to LULC for {name}: {raster}")
+        absent = sorted(name for name in names if name.casefold() not in {value.casefold() for value in sensitivity_headers})
+        if absent:
+            errors.append("Habitat Quality sensitivity table has no columns for threats: " + ", ".join(absent))
+        extra_columns = sorted({value for value in sensitivity_headers
+                                if value.casefold() not in {"lulc", "habitat", *[name.casefold() for name in names]}})
+        if extra_columns:
+            warnings.append("Habitat Quality sensitivity table has unused columns: " + ", ".join(extra_columns))
+        sensitivity_codes: set[int] = set()
+        for index, row in enumerate(sensitivity_rows, start=2):
+            code = integer(row.get("lulc"), f"Habitat Quality sensitivity row {index} lulc")
+            if code in sensitivity_codes:
+                raise ValueError(f"Habitat Quality sensitivity table has duplicate lulc: {code}")
+            sensitivity_codes.add(code)
+            finite(row.get("habitat"), f"Habitat Quality sensitivity row {index} habitat", bounded=True)
+            for name in names:
+                finite(row.get(name.casefold()), f"Habitat Quality sensitivity row {index} {name}", bounded=True)
+        lulc_report = lulc_codes(lulc)
+        if lulc_report["status"] != "completed":
+            raise ValueError("Habitat Quality LULC: " + "; ".join(lulc_report["errors"]))
+        actual_codes = set(lulc_report["codes"])
+        missing_codes, extra_codes = sorted(actual_codes - sensitivity_codes), sorted(sensitivity_codes - actual_codes)
+        if missing_codes:
+            errors.append("Habitat Quality sensitivity has no LULC rows for: " + ", ".join(map(str, missing_codes)))
+        if extra_codes:
+            warnings.append("Habitat Quality sensitivity has LULC rows absent from this raster: " + ", ".join(map(str, extra_codes)))
+    except (OSError, csv.Error, ValueError, ModuleNotFoundError) as error:
+        errors.append(f"cannot validate Habitat Quality parameter tables: {error}")
 
 
 def validate(model: str, datastack: Path) -> dict[str, Any]:
@@ -63,28 +178,13 @@ def validate(model: str, datastack: Path) -> dict[str, Any]:
             missing = missing_headers(headers(table), {"lucode", "root_depth", "kc", "lulc_veg"}) if table else {"table"}
             if missing: errors.append("Annual Water Yield biophysical table misses: " + ", ".join(sorted(missing)))
         if model == "habitat_quality":
-            threats = resolve(args.get("threats_table_path"), datastack.parent)
-            sensitivity = resolve(args.get("sensitivity_table_path"), datastack.parent)
-            threat_headers = headers(threats) if threats else set(); sensitivity_headers = headers(sensitivity) if sensitivity else set()
-            missing_threat = {"threat", "max_dist", "weight", "decay", "cur_path"} - threat_headers
-            if missing_threat: errors.append("Habitat Quality threats table misses: " + ", ".join(sorted(missing_threat)))
-            # InVEST Habitat Quality uses the field name ``lulc`` rather than
-            # Carbon's ``lucode``.  Treating them as interchangeable lets an
-            # invalid table pass preflight and fail only after a costly run.
-            missing_sensitivity = missing_headers(sensitivity_headers, {"lulc", "habitat"})
-            if missing_sensitivity: errors.append("Habitat Quality sensitivity table misses: " + ", ".join(sorted(missing_sensitivity)))
-            if threats and threat_headers and sensitivity_headers:
-                with threats.open(encoding="utf-8-sig", newline="") as stream:
-                    rows = list(csv.DictReader(stream))
-                names = {str(row.get("threat", "")).strip() for row in rows}
-                absent = sorted(name for name in names if name and name not in sensitivity_headers)
-                if absent: errors.append("Habitat Quality sensitivity table has no columns for threats: " + ", ".join(absent))
-                for row in rows:
-                    name, raw_path = str(row.get("threat", "")).strip(), row.get("cur_path")
-                    raster = resolve(raw_path, threats.parent)
-                    if not raster or not raster.exists():
-                        errors.append(f"Habitat Quality threat raster does not exist for {name or 'unnamed'}: {raster}")
-            if not args.get("access_vector_path"):
+            habitat_checks(args, datastack, errors, warnings)
+            access = args.get("access_vector_path")
+            if access:
+                access_path = resolve(access, datastack.parent)
+                if access_path is None or not access_path.exists():
+                    errors.append(f"Habitat Quality access vector does not exist: {access_path}")
+            else:
                 warnings.append("access_vector_path is absent; habitat access is treated as unrestricted")
         if model in {"sediment_delivery_ratio", "nutrient_delivery_ratio"} and args.get("biophysical_table_path"):
             table = resolve(args["biophysical_table_path"], datastack.parent)

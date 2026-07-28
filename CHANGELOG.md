@@ -2,6 +2,15 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.3.0 - 2026-07-27
+
+- Added the `classification_invest` task type for multi-period LULC classification followed by Carbon and Habitat Quality evaluation, without requiring PLUS.
+- A project can now give each imagery period its own training ROI and independent validation samples. ROI quality checks and per-period accuracy reports are compiled before the classifier runs.
+- Habitat Quality datastacks can be built from a dated LULC raster, threat rasters, and a sensitivity table. Carbon density coverage is checked against the actual LULC codes before InVEST starts.
+- Added sensor-aware classification profiles for Landsat 5 TM, Landsat 8 OLI, and Sentinel-2 MSI; six-period InVEST outputs are summarised into a CSV and portable SVG trend figure.
+- The local Copilot can turn a natural-language request plus an approved local input inventory into a schema-checked project plan. It remains confirmation-gated and local-tool-only.
+- Added an anonymous synthetic six-period example and an opt-in real-data acceptance-test entry point. The example proves contracts and workflow compilation; it is not presented as a real mining-area result.
+
 ## 0.2.1 — 2026-07-24
 
 - The `full_chain` project builder now accepts independent LULC validation, ecosystem-service, subsidence-water and ArcGIS layout configurations through the local MCP interface.

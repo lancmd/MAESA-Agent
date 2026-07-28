@@ -9,13 +9,16 @@ alone cannot supply either a trained neural model or supervised ROI samples.
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from classification_profiles import profile as resolve_classification_profile
 
 
 TASK_TYPES = {
     "classification_only", "lulc_change_analysis", "plus_only", "invest_only",
-    "ecosystem_service_only", "mapping_only", "full_chain",
+    "classification_invest", "ecosystem_service_only", "mapping_only", "full_chain",
 }
 
 
@@ -49,6 +52,70 @@ def _classification_accuracy(config: dict[str, Any] | None) -> dict[str, Any]:
     return result
 
 
+def _period_training_roi(period: dict[str, Any]) -> str | None:
+    """Return a dated ENVI training ROI, accepting ``roi`` as a short alias."""
+    training_roi, roi = period.get("training_roi"), period.get("roi")
+    if training_roi and roi:
+        raise ValueError("an imagery period may use training_roi or roi, not both")
+    value = training_roi or roi
+    if value is not None and not isinstance(value, str):
+        raise ValueError("imagery period training_roi must be a local path string")
+    return value
+
+
+def _period_accuracy(period: dict[str, Any], year: int) -> dict[str, Any] | None:
+    """Normalise one dated independent-validation contract.
+
+    Keeping the contract on the imagery item lets six-date projects retain the
+    provenance of the particular reference samples used for each image.  The
+    direct ``validation_samples`` member is deliberately retained as a compact
+    input form for agents that do not need to override the default fields.
+    """
+    raw = period.get("accuracy")
+    shorthand = period.get("validation_samples")
+    if raw is None and shorthand is None:
+        return None
+    if raw is None:
+        raw = {"validation_samples": shorthand}
+    if not isinstance(raw, dict):
+        raise ValueError("imagery period accuracy must be an object when supplied")
+    if shorthand is not None and raw.get("validation_samples") not in {None, shorthand}:
+        raise ValueError("imagery period validation_samples conflicts with accuracy.validation_samples")
+    result = {
+        "enabled": True,
+        "reference_field": "reference",
+        "prediction_field": "prediction",
+        "output": "outputs/validation/lulc_accuracy_{year}.json",
+        "confusion_matrix": "outputs/validation/lulc_confusion_matrix_{year}.csv",
+        **raw,
+    }
+    if shorthand is not None:
+        result["validation_samples"] = shorthand
+    if result.get("validation_samples"):
+        result["validation_samples"] = _local(str(result["validation_samples"]))
+    return result
+
+
+def _period_sensor_profile(period: dict[str, Any], classification_sensor: str | None,
+                           envi_method: str, scheme: str) -> dict[str, Any]:
+    """Normalise a dated ENVI sensor/method pair into a canonical profile."""
+    period_sensor = period.get("sensor")
+    if period_sensor is not None and (not isinstance(period_sensor, str) or not period_sensor.strip()):
+        raise ValueError("imagery period sensor must be a non-empty string")
+    if classification_sensor is not None and (not isinstance(classification_sensor, str) or not classification_sensor.strip()):
+        raise ValueError("classification_sensor must be a non-empty string")
+    sensor = period_sensor or classification_sensor
+    if not sensor:
+        raise ValueError("ENVI classification requires classification_sensor or imagery_periods[*].sensor")
+    period_method = period.get("envi_method", envi_method)
+    if not isinstance(period_method, str) or not period_method.strip():
+        raise ValueError("imagery period envi_method must be a non-empty string")
+    try:
+        return resolve_classification_profile(sensor, period_method, scheme)
+    except ValueError as error:
+        raise ValueError(str(error)) from error
+
+
 def _invest_model_config(models: dict[str, Any] | None, enabled: bool) -> dict[str, Any]:
     """Normalise agent-supplied InVEST model settings without inventing a model.
 
@@ -71,6 +138,14 @@ def _invest_model_config(models: dict[str, Any] | None, enabled: bool) -> dict[s
         for key in ("datastack_template", "provided_datastack"):
             if item.get(key):
                 item[key] = _local(str(item[key]))
+        builder = item.get("datastack_builder")
+        if isinstance(builder, str) and builder:
+            item["datastack_builder"] = _local(builder)
+        elif isinstance(builder, dict):
+            item["datastack_builder"] = dict(builder)
+            for key in ("config", "config_file"):
+                if item["datastack_builder"].get(key):
+                    item["datastack_builder"][key] = _local(str(item["datastack_builder"][key]))
         result[name] = item
     if not any(item.get("enabled") for item in result.values()):
         raise ValueError("invest_models must enable at least one model")
@@ -94,13 +169,14 @@ def build(project_file: Path, project_id: str, workspace: str, imagery_periods: 
           subsidence_water_config: dict[str, Any] | None = None, subsidence_water_boundary: str | None = None,
           aquatic_vegetation_boundary: str | None = None, bottom_sediment_boundary: str | None = None,
           elevation_vertical_datum: str | None = None, water_level_vertical_datum: str | None = None,
-          water_surface_elevation_m: float | None = None) -> dict[str, Any]:
+          water_surface_elevation_m: float | None = None, classification_sensor: str | None = None,
+          envi_method: str = "maximum_likelihood") -> dict[str, Any]:
     if task_type not in TASK_TYPES:
         raise ValueError("task_type must be one of " + ", ".join(sorted(TASK_TYPES)))
     imagery_periods = imagery_periods or []
     historical_lulc_periods = historical_lulc_periods or []
     driver_factors = driver_factors or {}
-    requires_classification = task_type in {"classification_only", "full_chain"}
+    requires_classification = task_type in {"classification_only", "classification_invest", "full_chain"}
     requires_history = task_type in {"lulc_change_analysis", "plus_only"}
     requires_plus = task_type in {"plus_only", "full_chain"}
     if requires_classification and not imagery_periods:
@@ -115,27 +191,57 @@ def build(project_file: Path, project_id: str, workspace: str, imagery_periods: 
         raise ValueError("ecosystem_service_only requires ecosystem_criteria and ecosystem_config")
     if task_type == "mapping_only" and not isinstance(gis_outputs, dict):
         raise ValueError("mapping_only requires a gis_outputs object")
-    if requires_classification and bool(model_package) == bool(training_roi):
-        raise ValueError("classification requires exactly one of model_package (PyTorch) or training_roi (ENVI supervised classification)")
     if scheme not in {"standard_6class", "high_water_coal_7class"}:
         raise ValueError("scheme must be standard_6class or high_water_coal_7class")
     native_patch_model = bool(model_package and (Path(model_package).expanduser() / "model" / "model.json").is_file())
     if native_patch_model and scheme == "high_water_coal_7class":
         # This model has one water class, so high-water seven-class output would be false precision.
         scheme = "standard_6class"
+    uses_envi = requires_classification and not model_package
     normalized_periods: list[dict[str, Any]] = []
     for item in imagery_periods:
         if not isinstance(item, dict) or not isinstance(item.get("year"), int) or not isinstance(item.get("path"), str):
             raise ValueError("each imagery period requires integer year and local path")
-        normalized_periods.append({"year": item["year"], "path": _local(item["path"])})
+        normalized = dict(item)
+        normalized["path"] = _local(item["path"])
+        if uses_envi:
+            resolved_profile = _period_sensor_profile(item, classification_sensor, envi_method, scheme)
+            normalized["sensor"] = resolved_profile["sensor_id"]
+            normalized["envi_method"] = resolved_profile["classification_method"]["method"]
+        else:
+            normalized.pop("envi_method", None)
+        period_roi = _period_training_roi(item)
+        normalized.pop("roi", None)
+        if period_roi:
+            normalized["training_roi"] = _local(period_roi)
+        else:
+            normalized.pop("training_roi", None)
+        period_accuracy = _period_accuracy(item, item["year"])
+        normalized.pop("validation_samples", None)
+        if period_accuracy is not None:
+            normalized["accuracy"] = period_accuracy
+        else:
+            normalized.pop("accuracy", None)
+        normalized_periods.append(normalized)
     normalized_periods.sort(key=lambda item: item["year"])
+    period_rois = [item.get("training_roi") for item in normalized_periods]
+    if requires_classification:
+        if model_package and (training_roi or any(period_rois)):
+            raise ValueError("classification uses either model_package (PyTorch) or global/dated ENVI training ROI, not both")
+        if not model_package and not training_roi and not all(period_rois):
+            raise ValueError("ENVI classification needs training_roi globally or in every imagery period")
+    if task_type == "classification_invest":
+        missing_accuracy = [str(item["year"]) for item in normalized_periods
+                            if not (isinstance(item.get("accuracy"), dict) and item["accuracy"].get("enabled"))]
+        if missing_accuracy:
+            raise ValueError("classification_invest requires independent accuracy configuration for every imagery period: " + ", ".join(missing_accuracy))
     normalized_lulc: list[dict[str, Any]] = []
     for item in historical_lulc_periods:
         if not isinstance(item, dict) or not isinstance(item.get("year"), int) or not isinstance(item.get("path"), str):
             raise ValueError("each historical LULC period requires integer year and local path")
         normalized_lulc.append({"year": item["year"], "path": _local(item["path"])})
     normalized_lulc.sort(key=lambda item: item["year"])
-    invest_enabled = task_type in {"invest_only", "full_chain"}
+    invest_enabled = task_type in {"invest_only", "classification_invest", "full_chain"}
     normalized_invest_models = _invest_model_config(invest_models, invest_enabled)
     accuracy = _classification_accuracy(accuracy_config)
     ecosystem_options = _object(ecosystem_service_config, "ecosystem_service_config")
@@ -149,11 +255,20 @@ def build(project_file: Path, project_id: str, workspace: str, imagery_periods: 
     factor_paths = [value.get("path") if isinstance(value, dict) else value for value in driver_factors.values()]
     invest_datastacks = [item.get(key) for item in normalized_invest_models.values() if isinstance(item, dict)
                          for key in ("datastack_template", "provided_datastack") if item.get(key)]
+    habitat_builder_configs = [
+        builder if isinstance(builder, str) else builder.get("config") or builder.get("config_file")
+        for item in normalized_invest_models.values() if isinstance(item, dict)
+        for builder in [item.get("datastack_builder")]
+        if isinstance(builder, (str, dict))
+    ]
     roots = sorted({str(Path(value).expanduser().resolve().parent) for value in [
-        *[item["path"] for item in normalized_periods], *[item["path"] for item in normalized_lulc], *factor_paths,
+        *[item["path"] for item in normalized_periods], *[item["path"] for item in normalized_lulc],
+        *[item.get("training_roi") for item in normalized_periods],
+        *[item.get("accuracy", {}).get("validation_samples") for item in normalized_periods if isinstance(item.get("accuracy"), dict)],
+        *factor_paths,
         mine_boundary, carbon_density, ecosystem_criteria, ecosystem_config, w_dat, subsidence_depth_raster,
         model_package, training_roi, workface_boundary, subsidence_water_boundary, aquatic_vegetation_boundary,
-        bottom_sediment_boundary, accuracy.get("validation_samples"), *invest_datastacks] if value})
+        bottom_sediment_boundary, accuracy.get("validation_samples"), *invest_datastacks, *habitat_builder_configs] if value})
     if isinstance(gis_outputs, dict):
         for key in ("aprx",):
             if gis_outputs.get(key):
@@ -190,9 +305,11 @@ def build(project_file: Path, project_id: str, workspace: str, imagery_periods: 
         "schema_version": 2, "project_id": project_id, "task_type": task_type, "workspace": workspace,
         "security": {"input_roots": roots, "output_root": str((project_root / workspace).resolve().parent)},
         "inputs": inputs,
-        "classification": {"enabled": requires_classification, "engine": "pytorch" if model_package else ("envi" if training_roi else "provided_lulc"), "scheme": scheme,
+        "classification": {"enabled": requires_classification, "engine": "pytorch" if model_package else ("envi" if requires_classification else "provided_lulc"), "scheme": scheme,
                            "output_lulc": "outputs/lulc/LULC_{year}.tif", "output_confidence": "outputs/lulc/confidence_{year}.tif",
-                           "envi_method": "maximum_likelihood", "accuracy": accuracy,
+                           "sensor": (resolve_classification_profile(classification_sensor, envi_method, scheme)["sensor_id"]
+                                      if uses_envi and classification_sensor else None),
+                           "envi_method": envi_method, "accuracy": accuracy,
                            "patch_classifier": {"enabled": native_patch_model, "patch_size": patch_size, "stride": patch_stride,
                                                 "band_indexes": patch_band_indexes, "input_scale": patch_input_scale,
                                                 "batch_size": patch_batch_size, "allow_as_lulc": bool(allow_patch_grid_as_lulc)}},
@@ -226,10 +343,50 @@ def build(project_file: Path, project_id: str, workspace: str, imagery_periods: 
                               (["resnet50_patch_size_stride_rgb_scale"] if native_patch_model and
                                (not isinstance(patch_size, int) or not isinstance(patch_stride, int) or
                                 not isinstance(patch_band_indexes, list) or not isinstance(patch_input_scale, (int, float))) else []) +
-                              (["resnet50_patch_grid_full_chain_confirmation_and_accuracy"] if native_patch_model and task_type == "full_chain" else []) +
+                              (["resnet50_patch_grid_lulc_confirmation_and_accuracy"] if native_patch_model and task_type in {"full_chain", "classification_invest"} else []) +
                               (["invest_model_datastack"] if any(item.get("enabled") and name != "carbon" and
-                                                                   not (item.get("datastack_template") or item.get("provided_datastack"))
+                                                                   not (item.get("datastack_template") or item.get("provided_datastack") or
+                                                                        (name == "habitat_quality" and item.get("datastack_builder")))
                                                                    for name, item in normalized_invest_models.items()) else []) +
                               (["independent_lulc_validation_samples"] if task_type == "full_chain" and not accuracy.get("enabled") else []) +
                               (["ecosystem_service_config"] if task_type == "full_chain" and not ecosystem_enabled else []) +
                               (["gis_layout_config"] if task_type == "full_chain" and not gis_payload.get("enabled") else [])}
+
+
+def preflight_build_arguments(project_id: str, workspace: str, **arguments: Any) -> dict[str, Any]:
+    """Check a project-build request without creating the requested project.
+
+    Natural-language project creation needs to reject a plan *before* the user
+    confirms a write to ``output_project``.  The builder alone only knows how
+    to assemble a JSON document; some requirements (for example a Carbon
+    density table for the default Carbon model) are checked by the project
+    validator.  This helper deliberately exercises both layers in a temporary
+    directory, so it stays in lockstep with the real MCP build path while
+    leaving the selected workspace and output target untouched.
+    """
+    if not isinstance(project_id, str) or not project_id.strip():
+        return {"status": "invalid", "errors": ["project_id must be a non-empty string"], "pending_inputs": []}
+    if not isinstance(workspace, str) or not workspace.strip():
+        return {"status": "invalid", "errors": ["workspace must be a non-empty string"], "pending_inputs": []}
+
+    # Import lazily: project_validator is intentionally a downstream contract
+    # and normal builder callers do not need to import its GIS dependencies.
+    from project_validator import validate  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory(prefix="maesa-project-preflight-") as temporary:
+        preview_project = Path(temporary) / "project.json"
+        try:
+            build_report = build(preview_project, project_id.strip(), workspace, **arguments)
+        except (OSError, TypeError, ValueError) as caught:
+            return {"status": "invalid", "errors": [str(caught)], "pending_inputs": []}
+        validation = validate(preview_project)
+        errors = list(validation.get("errors", []))
+        payload = json.loads(preview_project.read_text(encoding="utf-8"))
+        pending_inputs = list(build_report.get("pending_inputs", []))
+    return {
+        "status": "valid" if not errors else "invalid",
+        "errors": errors,
+        "warnings": list(validation.get("warnings", [])),
+        "pending_inputs": pending_inputs,
+        "task_type": payload.get("task_type"),
+    }

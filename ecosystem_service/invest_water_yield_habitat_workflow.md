@@ -47,3 +47,32 @@ Habitat Quality datastack 至少要包含：
 - 校准记录（若启用沉陷积水校准）；
 - 水源供给、生境质量、碳储量的权衡/协同与综合生态服务结果；
 - 自动 SVG 专题图，以及可选 ArcGIS Pro 布局图。
+
+## Habitat Quality 数据栈构建器
+
+不再要求先手工编辑 Habitat Quality datastack。可调用 MCP
+`build_habitat_quality_datastack`，或运行
+`scripts/invest_datastack_builder.py --config habitat_config.json --output-dir <workspace>`。
+构建器会写出独立的 `habitat_threats.csv`、`habitat_sensitivity.csv`、
+`habitat_quality_datastack.json` 和 `habitat_datastack_manifest.json`；每个年份或 PLUS 情景应使用自己的输出目录。
+
+配置文件仍由研究者提供生态参数，例如：
+
+```json
+{
+  "lulc_path": "data/LULC_2025.tif",
+  "half_saturation_constant": 0.5,
+  "threats": [
+    {"name": "road", "raster": "data/road_2025.tif", "max_distance_m": 1000, "weight": 1, "decay": "linear"}
+  ],
+  "sensitivity": [
+    {"lulc": 1, "habitat": 0.8, "threats": {"road": 0.3}}
+  ]
+}
+```
+
+构建时会检查威胁栅格与 LULC 的 CRS、范围、分辨率和像元网格是否一致；敏感性表必须覆盖该期 LULC 的全部有效类别。表中多出的类别会记录为警告，缺失类别或 0–1 范围以外的适宜性/敏感性会阻止运行。构建器不会根据影像猜测威胁权重、影响距离或敏感性。
+
+在 `project.json` 中可将上述 JSON 文件写为 `invest.models.habitat_quality.datastack_builder`。工作流会在每期分类图或每个 PLUS 情景图生成后覆盖其中的 `lulc_path`，并在各自的 `generated/invest_habitat_quality_<时期>_habitat/` 目录中构建独立数据栈；因此共享参数文件可以不写 `lulc_path`。
+
+已有生成表或数据栈时，命令行需显式传入 `--confirm-overwrite`，MCP 需传入 `confirm_overwrite: true`；这不会修改原始 LULC、威胁或敏感性输入。

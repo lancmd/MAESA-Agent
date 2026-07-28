@@ -25,8 +25,8 @@ with tempfile.TemporaryDirectory() as temporary:
     (root / "ecosystem.json").write_text(json.dumps({"schema_version": 2, "method": "minmax", "id_field": "unit_id",
         "criteria": [{"field": "carbon_storage_t_c", "direction": "benefit", "weight": 1.0}], "normalization": {"bounds": {}}}), encoding="utf-8")
     report = build(root / "project.json", "full-chain-options", "runtime", task_type="full_chain",
-                   imagery_periods=[{"year": 2020, "path": str(root / "image_2020.tif")},
-                                    {"year": 2025, "path": str(root / "image_2025.tif")}],
+                   imagery_periods=[{"year": 2020, "path": str(root / "image_2020.tif"), "sensor": "landsat_8_oli"},
+                                    {"year": 2025, "path": str(root / "image_2025.tif"), "sensor": "sentinel_2_msi"}],
                    driver_factors={"dem": str(root / "dem.tif")}, mine_boundary=str(root / "boundary.gpkg"),
                    carbon_density=str(root / "carbon.csv"), training_roi=str(root / "roi.gpkg"),
                    subsidence_depth_raster=str(root / "depth.tif"),
@@ -50,8 +50,8 @@ with tempfile.TemporaryDirectory() as temporary:
     assert {"lulc_accuracy", "subsidence_water", "ecosystem_service", "map_layout"}.issubset(compiled["stage_ids"]), compiled
 
     incomplete = build(root / "incomplete.json", "full-chain-incomplete", "runtime-incomplete", task_type="full_chain",
-                       imagery_periods=[{"year": 2020, "path": str(root / "image_2020.tif")},
-                                        {"year": 2025, "path": str(root / "image_2025.tif")}],
+                       imagery_periods=[{"year": 2020, "path": str(root / "image_2020.tif"), "sensor": "landsat_8_oli"},
+                                        {"year": 2025, "path": str(root / "image_2025.tif"), "sensor": "sentinel_2_msi"}],
                        driver_factors={"dem": str(root / "dem.tif")}, mine_boundary=str(root / "boundary.gpkg"),
                        carbon_density=str(root / "carbon.csv"), training_roi=str(root / "roi.gpkg"),
                        subsidence_depth_raster=str(root / "depth.tif"))

@@ -37,6 +37,8 @@ def main() -> int:
                                ecosystem_criteria=params.get("ecosystem_criteria"), ecosystem_config=params.get("ecosystem_config"),
                                gis_outputs=params.get("gis_outputs"), w_dat=params.get("w_dat"), model_package=params.get("model_package"),
                                training_roi=params.get("training_roi"), scheme=params.get("scheme", "high_water_coal_7class"),
+                               classification_sensor=params.get("classification_sensor"),
+                               envi_method=params.get("envi_method", "maximum_likelihood"),
                                w_dat_unit=params.get("w_dat_unit"), w_dat_convention=params.get("w_dat_convention"),
                                workface_boundary=params.get("workface_boundary"),
                                w_dat_max_distance_m=params.get("w_dat_max_distance_m", 300.0),
@@ -113,8 +115,11 @@ def main() -> int:
         result = {"status": report["status"], "result": report, "outputs": [report["output"]]}
     elif envelope.get("operation") == "analysis.lulc_accuracy":
         params = envelope["parameters"]
+        raster = params.get("classification_raster")
         report = evaluate_lulc(Path(params["samples_file"]), params.get("reference_field", "reference"),
-                               params.get("prediction_field", "prediction"), Path(params["output"]))
+                               params.get("prediction_field", "prediction"), Path(params["output"]),
+                               Path(raster) if raster else None, params.get("x_field"), params.get("y_field"),
+                               params.get("samples_crs"), bool(params.get("require_raster_sampling", False)))
         result = {"status": "completed", "result": report, "outputs": [report["output"]]}
     elif envelope.get("operation") == "analysis.plus_validation":
         params = envelope["parameters"]

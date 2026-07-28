@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -12,20 +11,124 @@ from typing import Any
 from path_safety import PathSafetyError, resolved, require_within, resolve_input
 from plus_contract import re_contract_errors
 from spatial_contract import parse_driver_factors
+from carbon_density_contract import validate_table as validate_carbon_density_table
+from classification_profiles import profile as resolve_classification_profile
 
 
 VALID_TASK_TYPES = {
     "classification_only", "lulc_change_analysis", "plus_only", "invest_only",
-    "ecosystem_service_only", "mapping_only", "full_chain",
+    "classification_invest", "ecosystem_service_only", "mapping_only", "full_chain",
 }
 
 
-REQUIRED_CARBON_COLUMNS = {"lucode", "c_above", "c_below", "c_soil", "c_dead"}
 VALID_ENGINES = {"envi", "pytorch", "provided_lulc"}
+VALID_ENVI_METHODS = {"maximum_likelihood", "minimum_distance"}
 VALID_ECOSYSTEM_METHODS = {"minmax", "ahp"}
 VALID_PLUS_SCENARIOS = {"ND", "UD", "EP", "RE"}
 VALID_SUBSIDENCE_WATER_MODES = {"classify_only", "estimate_volume", "composite_subsidence_water_carbon"}
 VALID_INVEST_MODELS = {"carbon", "annual_water_yield", "habitat_quality", "sediment_delivery_ratio", "nutrient_delivery_ratio"}
+
+
+def imagery_period_training_roi(period: dict[str, Any]) -> str | None:
+    """Return the canonical dated training ROI; ``roi`` is a supported alias."""
+    training_roi, roi = period.get("training_roi"), period.get("roi")
+    if training_roi and roi:
+        raise ValueError("training_roi and roi cannot both be set for one imagery period")
+    value = training_roi or roi
+    if value is not None and not isinstance(value, str):
+        raise ValueError("imagery period training_roi must be a path string")
+    return value
+
+
+def imagery_period_accuracy(period: dict[str, Any], year: int) -> dict[str, Any]:
+    """Read one date's independent validation contract without global fallbacks.
+
+    A period-level contract intentionally never borrows the top-level accuracy
+    object: the latter is retained for legacy projects where only the latest
+    classified image was evaluated.
+    """
+    raw = period.get("accuracy")
+    shorthand = period.get("validation_samples")
+    if raw is None and shorthand is None:
+        return {"enabled": False}
+    if raw is None:
+        raw = {"validation_samples": shorthand}
+    if not isinstance(raw, dict):
+        raise ValueError("imagery period accuracy must be an object")
+    if shorthand is not None and raw.get("validation_samples") not in {None, shorthand}:
+        raise ValueError("imagery period validation_samples conflicts with accuracy.validation_samples")
+    result = {
+        "enabled": True,
+        "reference_field": "reference",
+        "prediction_field": "prediction",
+        "output": "outputs/validation/lulc_accuracy_{year}.json",
+        "confusion_matrix": "outputs/validation/lulc_confusion_matrix_{year}.csv",
+        **raw,
+    }
+    if shorthand is not None:
+        result["validation_samples"] = shorthand
+    return result
+
+
+def imagery_period_sensor_profile(period: dict[str, Any], classification: dict[str, Any]) -> dict[str, Any]:
+    """Resolve one ENVI period's sensor and classifier contract.
+
+    ``classification.sensor`` is a deliberate fallback for a single-sensor
+    project; a dated ``imagery_periods[*].sensor`` takes precedence.  The
+    returned object is the canonical profile that is later written into the
+    workflow and handed to ENVI, rather than leaving a human-readable sensor
+    label disconnected from the executable stage.
+    """
+    period_sensor = period.get("sensor")
+    global_sensor = classification.get("sensor")
+    if period_sensor is not None and (not isinstance(period_sensor, str) or not period_sensor.strip()):
+        raise ValueError("imagery period sensor must be a non-empty string")
+    if global_sensor is not None and (not isinstance(global_sensor, str) or not global_sensor.strip()):
+        raise ValueError("classification.sensor must be a non-empty string")
+    sensor = period_sensor or global_sensor
+    if not sensor:
+        raise ValueError("ENVI classification requires classification.sensor or imagery_periods[*].sensor")
+
+    period_method = period.get("envi_method")
+    global_method = classification.get("envi_method", "maximum_likelihood")
+    if period_method is not None and (not isinstance(period_method, str) or not period_method.strip()):
+        raise ValueError("imagery period envi_method must be a non-empty string")
+    if not isinstance(global_method, str) or not global_method.strip():
+        raise ValueError("classification.envi_method must be a non-empty string")
+    method = period_method or global_method
+    scheme = classification.get("scheme", "high_water_coal_7class")
+    try:
+        return resolve_classification_profile(sensor, method, scheme)
+    except ValueError as error:
+        raise ValueError(str(error)) from error
+
+
+def validate_accuracy_contract(label: str, accuracy: dict[str, Any], base: Path,
+                               input_roots: list[Path], errors: list[str], *,
+                               require_raster_sampling: bool = False) -> Path | None:
+    """Validate a global or dated accuracy configuration consistently.
+
+    ``classification_invest`` uses the stricter branch: reference points are
+    sampled from the LULC produced by the immediately preceding stage.  A
+    table-side prediction value is therefore never accepted as evidence for a
+    generated classification.
+    """
+    if not accuracy.get("enabled"):
+        return None
+    samples = required_path(f"{label}.validation_samples", accuracy.get("validation_samples"), base, input_roots, errors)
+    for key in ("reference_field", "prediction_field", "output", "confusion_matrix"):
+        if not accuracy.get(key):
+            errors.append(f"{label}.{key} is required when accuracy is enabled")
+    if bool(accuracy.get("x_field")) != bool(accuracy.get("y_field")):
+        errors.append(f"{label}.x_field and y_field are supplied together")
+    if require_raster_sampling:
+        for key in ("x_field", "y_field", "samples_crs"):
+            value = accuracy.get(key)
+            if not isinstance(value, str) or not value.strip():
+                errors.append(f"{label}.{key} is required for raster-sampled independent accuracy")
+        if accuracy.get("classification_raster"):
+            errors.append(f"{label}.classification_raster is assigned by the generated classification stage and cannot be supplied")
+    return samples
 
 
 def native_patch_classifier(package: Path | None) -> bool:
@@ -84,21 +187,88 @@ def optional_path(label: str, value: str | None, base: Path, input_roots: list[P
 def validate_carbon_table(path: Path | None, errors: list[str]) -> None:
     if path is None or not path.exists():
         return
-    try:
-        with path.open("r", encoding="utf-8-sig", newline="") as stream:
-            header = set((csv.DictReader(stream).fieldnames or []))
-        missing = REQUIRED_CARBON_COLUMNS - header
-        if missing:
-            errors.append(f"carbon density table misses columns: {', '.join(sorted(missing))}")
-    except Exception as error:
-        errors.append(f"cannot read carbon density table: {error}")
+    report = validate_carbon_density_table(path)
+    errors.extend(f"carbon density: {message}" for message in report["errors"])
+
+
+HABITAT_BUILDER_PATH_KEYS = {
+    "sensitivity_table_path", "access_vector_path", "raster", "current_raster", "future_raster",
+    "cur_path", "fut_path", "base_path", "path",
+}
+
+
+def validate_habitat_builder_payload(payload: Any, config_base: Path, input_roots: list[Path],
+                                     errors: list[str], label: str) -> None:
+    """Validate declared Habitat inputs without treating its dated LULC as static.
+
+    The workflow replaces ``lulc_path`` for every historical/PLUS date, so a
+    config may omit it or retain an illustrative path.  Threat and access
+    inputs, in contrast, are real source data and are checked against the same
+    local-input boundary as every other project input.
+    """
+    if not isinstance(payload, dict):
+        errors.append(f"{label} configuration must be an object")
+        return
+    for field in ("threats", "sensitivity", "half_saturation_constant"):
+        if payload.get(field) in (None, "", [], {}):
+            # A sensitivity CSV is an equivalent source to an inline mapping.
+            if field == "sensitivity" and payload.get("sensitivity_table_path"):
+                continue
+            errors.append(f"{label}.{field} is required")
+
+    def walk(value: Any, key: str = "", trail: str = label) -> None:
+        if isinstance(value, dict):
+            for name, item in value.items():
+                walk(item, str(name), f"{trail}.{name}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                walk(item, key, f"{trail}[{index}]")
+        elif isinstance(value, str) and value and key in HABITAT_BUILDER_PATH_KEYS:
+            required_path(trail, value, config_base, input_roots, errors)
+
+    walk(payload)
+
+
+def validate_habitat_datastack_builder(value: Any, base: Path, input_roots: list[Path], errors: list[str]) -> None:
+    """Check the project-side reference to a generated Habitat Quality stack.
+
+    The detailed threat/sensitivity and raster-grid checks run in the generated
+    stage after its dated LULC exists.  At project-validation time we still
+    establish that an explicit local configuration file (or inline object) was
+    supplied, rather than silently falling back to an invented datastack.
+    """
+    if isinstance(value, str) and value.strip():
+        path = required_path("invest.models.habitat_quality.datastack_builder", value, base, input_roots, errors)
+        if path and path.exists():
+            try:
+                validate_habitat_builder_payload(load_json(path), path.parent, input_roots, errors,
+                                                 "invest.models.habitat_quality.datastack_builder")
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                errors.append(f"cannot read Habitat Quality builder configuration: {error}")
+        return
+    if not isinstance(value, dict):
+        errors.append("invest.models.habitat_quality.datastack_builder must be a config path or object")
+        return
+    config_file = value.get("config") or value.get("config_file")
+    if config_file:
+        path = required_path("invest.models.habitat_quality.datastack_builder.config", config_file, base, input_roots, errors)
+        if path and path.exists():
+            try:
+                validate_habitat_builder_payload(load_json(path), path.parent, input_roots, errors,
+                                                 "invest.models.habitat_quality.datastack_builder.config")
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                errors.append(f"cannot read Habitat Quality builder configuration: {error}")
+        return
+    validate_habitat_builder_payload(value, base, input_roots, errors,
+                                     "invest.models.habitat_quality.datastack_builder")
 
 
 def lulc_needed(classification: dict[str, Any], plus: dict[str, Any], invest: dict[str, Any]) -> bool:
     return bool(classification.get("enabled") or (invest.get("enabled") and not plus.get("enabled")))
 
 
-def imagery_periods(inputs: dict[str, Any], base: Path, input_roots: list[Path], errors: list[str]) -> list[dict[str, Any]]:
+def imagery_periods(inputs: dict[str, Any], base: Path, input_roots: list[Path], errors: list[str], *,
+                    require_raster_sampled_accuracy: bool = False) -> list[dict[str, Any]]:
     """Validate ordered multi-date imagery without breaking the older imagery list.
 
     ``imagery_periods`` is the automation-facing form.  It is intentionally
@@ -122,6 +292,20 @@ def imagery_periods(inputs: dict[str, Any], base: Path, input_roots: list[Path],
         else:
             years.append(year)
         required_path(f"imagery_periods[{index}].path", item.get("path"), base, input_roots, errors)
+        try:
+            period_roi = imagery_period_training_roi(item)
+        except ValueError as error:
+            errors.append(f"imagery_periods[{index}]: {error}")
+            period_roi = None
+        if period_roi:
+            optional_path(f"imagery_periods[{index}].training_roi", period_roi, base, input_roots, errors)
+        try:
+            period_accuracy = imagery_period_accuracy(item, int(year) if isinstance(year, int) else index + 1)
+        except ValueError as error:
+            errors.append(f"imagery_periods[{index}]: {error}")
+            period_accuracy = {"enabled": False}
+        validate_accuracy_contract(f"imagery_periods[{index}].accuracy", period_accuracy, base, input_roots, errors,
+                                   require_raster_sampling=require_raster_sampled_accuracy)
         result.append(item)
     if len(years) != len(set(years)):
         errors.append("inputs.imagery_periods years must be unique")
@@ -190,6 +374,7 @@ def validate(project_path: Path) -> dict[str, Any]:
             "lulc_change_analysis": {"classification": False, "plus": False, "invest": False, "ecosystem": False, "gis": False},
             "plus_only": {"classification": False, "plus": True, "invest": False, "ecosystem": False, "gis": False},
             "invest_only": {"classification": False, "plus": False, "invest": True, "ecosystem": False, "gis": False},
+            "classification_invest": {"classification": True, "plus": False, "invest": True, "ecosystem": False, "gis": False},
             "ecosystem_service_only": {"classification": False, "plus": False, "invest": False, "ecosystem": True, "gis": False},
             "mapping_only": {"classification": False, "plus": False, "invest": False, "ecosystem": False, "gis": True},
         }.get(task_type)
@@ -209,7 +394,14 @@ def validate(project_path: Path) -> dict[str, Any]:
         engine = classification.get("engine")
         if engine not in VALID_ENGINES:
             errors.append(f"classification.engine must be one of {sorted(VALID_ENGINES)}")
-        periods = imagery_periods(inputs, base, input_roots, errors)
+        scheme = classification.get("scheme")
+        if scheme not in {"standard_6class", "high_water_coal_7class"}:
+            errors.append("classification.scheme must be standard_6class or high_water_coal_7class")
+        configured_envi_method = classification.get("envi_method", "maximum_likelihood")
+        if engine == "envi" and configured_envi_method not in VALID_ENVI_METHODS:
+            errors.append("classification.envi_method must be maximum_likelihood or minimum_distance")
+        periods = imagery_periods(inputs, base, input_roots, errors,
+                                  require_raster_sampled_accuracy=task_type == "classification_invest")
         imagery = inputs.get("imagery", [])
         if engine != "provided_lulc":
             if periods:
@@ -219,10 +411,78 @@ def validate(project_path: Path) -> dict[str, Any]:
             else:
                 for index, item in enumerate(imagery):
                     required_path(f"imagery[{index}]", item, base, input_roots, errors)
+        period_accuracy_contracts: list[dict[str, Any]] = []
+        for index, period in enumerate(periods):
+            try:
+                period_accuracy_contracts.append(imagery_period_accuracy(period, int(period.get("year", index + 1))))
+            except ValueError:
+                # The detailed schema error was recorded in imagery_periods.
+                period_accuracy_contracts.append({"enabled": False})
+        if task_type == "classification_invest":
+            seen_validation_samples: dict[Path, int] = {}
+            for index, accuracy in enumerate(period_accuracy_contracts):
+                if not accuracy.get("enabled"):
+                    errors.append(f"classification_invest requires imagery_periods[{index}].accuracy with independent validation_samples")
+                    continue
+                try:
+                    samples_path = resolve_input(str(accuracy.get("validation_samples", "")), base, input_roots)
+                except (PathSafetyError, TypeError, ValueError):
+                    samples_path = None
+                if samples_path:
+                    previous = seen_validation_samples.get(samples_path)
+                    if previous is not None:
+                        errors.append("classification_invest requires a distinct validation_samples file for every imagery period "
+                                      f"(imagery_periods[{previous}] and imagery_periods[{index}] point to {samples_path})")
+                    else:
+                        seen_validation_samples[samples_path] = index
+                if engine == "envi":
+                    try:
+                        period_roi = imagery_period_training_roi(periods[index])
+                    except ValueError:
+                        period_roi = None
+                    if not period_roi:
+                        errors.append(f"classification_invest ENVI requires imagery_periods[{index}].training_roi; a global training_roi cannot be reused")
+                        continue
+                    try:
+                        roi_path = resolve_input(period_roi, base, input_roots)
+                    except (PathSafetyError, TypeError, ValueError):
+                        roi_path = None
+                    if samples_path and roi_path and samples_path == roi_path:
+                        errors.append(f"imagery_periods[{index}] uses the same file for training_roi and validation_samples")
         if engine == "envi":
-            required_path("training_roi", inputs.get("training_roi"), base, input_roots, errors)
+            global_roi = inputs.get("training_roi")
+            if global_roi:
+                required_path("training_roi", global_roi, base, input_roots, errors)
+            elif not periods:
+                errors.append("ENVI classification requires inputs.training_roi when dated imagery_periods are not supplied")
+            if not periods and isinstance(imagery, list) and imagery:
+                try:
+                    imagery_period_sensor_profile({}, classification)
+                except ValueError as error:
+                    errors.append(str(error))
+            for index, period in enumerate(periods):
+                try:
+                    period_roi = imagery_period_training_roi(period)
+                except ValueError:
+                    period_roi = None
+                if task_type == "classification_invest" and not period_roi:
+                    # Each date has a separate supervised training source so
+                    # its validation contract cannot silently borrow a global ROI.
+                    continue
+                if not global_roi and not period_roi:
+                    errors.append(f"ENVI classification needs inputs.training_roi or imagery_periods[{index}].training_roi")
+                try:
+                    imagery_period_sensor_profile(period, classification)
+                except ValueError as error:
+                    errors.append(f"imagery_periods[{index}]: {error}")
         elif engine == "pytorch":
             package = required_path("model_package", inputs.get("model_package"), base, input_roots, errors)
+            for index, period in enumerate(periods):
+                try:
+                    if imagery_period_training_roi(period):
+                        errors.append(f"imagery_periods[{index}].training_roi is only valid for ENVI classification")
+                except ValueError:
+                    pass
             native_patch = native_patch_classifier(package)
             if package and package.is_dir() and not (package / "model_config.json").exists() and not native_patch:
                 errors.append("PyTorch model_package must contain model_config.json or model/model.json")
@@ -246,14 +506,12 @@ def validate(project_path: Path) -> dict[str, Any]:
                 scale = patch.get("input_scale")
                 if not isinstance(scale, (int, float)) or float(scale) <= 0:
                     errors.append("classification.patch_classifier.input_scale must be a positive number")
-                if task_type == "full_chain" and not patch.get("allow_as_lulc", False):
+                if task_type in {"full_chain", "classification_invest"} and not patch.get("allow_as_lulc", False):
                     errors.append("native ResNet-50 patch-grid output is not pixel-wise LULC; set patch_classifier.allow_as_lulc=true only after independent validation")
-                if task_type == "full_chain" and patch.get("allow_as_lulc", False) and not classification.get("accuracy", {}).get("enabled"):
-                    errors.append("native ResNet-50 full-chain use requires classification.accuracy.enabled=true with independent validation samples")
+                if task_type in {"full_chain", "classification_invest"} and patch.get("allow_as_lulc", False) and not (classification.get("accuracy", {}).get("enabled") or any(item.get("enabled") for item in period_accuracy_contracts)):
+                    errors.append("native ResNet-50 LULC-to-InVEST use requires independent validation samples")
         elif engine == "provided_lulc":
             required_path("lulc_baseline", inputs.get("lulc_baseline"), base, input_roots, errors)
-        if classification.get("scheme") not in {"standard_6class", "high_water_coal_7class"}:
-            errors.append("classification.scheme must be standard_6class or high_water_coal_7class")
         threshold = classification.get("low_confidence_threshold")
         if threshold is not None and (not isinstance(threshold, (int, float)) or not 0 < threshold < 1):
             errors.append("classification.low_confidence_threshold must be between 0 and 1")
@@ -261,12 +519,7 @@ def validate(project_path: Path) -> dict[str, Any]:
             errors.append("classification.output_low_confidence requires low_confidence_threshold")
         accuracy = classification.get("accuracy", {})
         if accuracy and accuracy.get("enabled"):
-            required_path("classification.accuracy.validation_samples", accuracy.get("validation_samples"), base, input_roots, errors)
-            for key in ("reference_field", "prediction_field", "output", "confusion_matrix"):
-                if not accuracy.get(key):
-                    errors.append(f"classification.accuracy.{key} is required when accuracy is enabled")
-            if bool(accuracy.get("x_field")) != bool(accuracy.get("y_field")):
-                errors.append("classification.accuracy.x_field and y_field are supplied together")
+            validate_accuracy_contract("classification.accuracy", accuracy, base, input_roots, errors)
 
     if plus.get("enabled"):
         historical = inputs.get("historical_lulc", [])
@@ -353,14 +606,18 @@ def validate(project_path: Path) -> dict[str, Any]:
             if not config.get("enabled"):
                 continue
             template = config.get("datastack_template") or config.get("provided_datastack")
+            habitat_builder = config.get("datastack_builder") if name == "habitat_quality" else None
             if template:
                 required_path(f"invest.models.{name} datastack", template, base, input_roots, errors)
+            elif habitat_builder is not None:
+                validate_habitat_datastack_builder(habitat_builder, base, input_roots, errors)
             elif name != "carbon":
                 errors.append(f"invest.models.{name} requires datastack_template or provided_datastack")
             outputs = config.get("expected_outputs")
             if outputs is not None and (not isinstance(outputs, list) or any(not isinstance(item, str) or not item for item in outputs)):
                 errors.append(f"invest.models.{name}.expected_outputs must be a list of non-empty paths")
-            if name != "carbon" and (not isinstance(outputs, list) or not outputs):
+            automatic_habitat_outputs = name == "habitat_quality" and habitat_builder is not None
+            if name != "carbon" and not automatic_habitat_outputs and (not isinstance(outputs, list) or not outputs):
                 errors.append(f"invest.models.{name}.expected_outputs is required to verify scenario outputs")
             aggregation = config.get("service_aggregation")
             if aggregation is not None and aggregation not in {"sum", "mean", "depth_mm_to_m3"}:

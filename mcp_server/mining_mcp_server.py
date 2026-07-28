@@ -49,10 +49,22 @@ INPUT_PATH_KEYS = {"path", "project_file", "project", "datastack", "model_packag
                    "water_boundary", "core_driver_input", "carbon_pools_path", "imagery", "historical_lulc", "lulc_baseline",
                    "driver_factors", "mine_boundary", "roi", "training_roi", "subsidence_water_boundary",
                    "aquatic_vegetation_boundary", "bottom_sediment_boundary", "carbon_density", "subsidence_depth_raster",
-                   "w_dat", "workface_boundary"}
+                   "w_dat", "workface_boundary", "roi_file", "lulc_path", "sensitivity_table_path", "access_vector_path",
+                   "raster", "current_raster", "future_raster", "cur_path", "fut_path", "base_path", "config_file"}
 OUTPUT_PATH_KEYS = {"output", "output_job", "workspace", "class_output", "confidence_output", "low_confidence_output",
                     "output_raster", "output_report", "expected_output", "output_directory", "water_depth_output",
-                    "volume_table", "carbon_table", "pdf", "png", "aprx_output", "validation_output", "model_workspace", "output_project"}
+                    "volume_table", "carbon_table", "pdf", "png", "aprx_output", "validation_output", "model_workspace",
+                    "output_project", "output_datastack"}
+# These fields are commonly nested below a path-bearing list/object (for
+# example ``imagery_periods``).  They are descriptive values, not filesystem
+# references; inheriting the parent input role would incorrectly treat
+# ``sensor: landsat_8_oli`` or ``reference_field: reference`` as a path.
+METADATA_KEYS = {"sensor", "envi_method", "method", "scheme", "year", "enabled", "class_field", "role_field",
+                 "training_value", "validation_value", "reference_field", "prediction_field", "x_field", "y_field",
+                 "samples_crs", "data_type", "type", "resampling", "service_field", "service_unit",
+                 "service_aggregation", "source", "stage_id", "output_index", "name", "kind", "model",
+                 "scenario", "scenarios", "class_codes", "expected_classes", "minimum_rois_per_class",
+                 "max_class_imbalance_ratio", "sample_count_field", "path_scope", "generated"}
 
 
 def allowed_input_roots() -> list[Path]:
@@ -72,6 +84,8 @@ def allowed_output_root() -> Path:
 
 
 def _path_role(key: str | None, inherited: str | None) -> str | None:
+    if key in METADATA_KEYS:
+        return None
     if key in OUTPUT_PATH_KEYS:
         return "output"
     if key in INPUT_PATH_KEYS:
@@ -81,7 +95,9 @@ def _path_role(key: str | None, inherited: str | None) -> str | None:
         return "output"
     if any(token in normalized for token in ("path", "file", "raster", "vector", "imagery", "lulc", "boundary", "roi", "datastack", "table", "workspace", "directory")):
         return inherited or "input"
-    return inherited
+    # A parent object being an input container does not make every nested
+    # string a path.  Only declared/path-shaped fields are guarded as paths.
+    return None
 
 
 def guard_paths(value: Any, key: str | None = None, inherited: str | None = None) -> None:
@@ -143,6 +159,15 @@ class BackendRegistry:
         source = self.path if self.path.exists() else EXAMPLE_REGISTRY
         with source.open("r", encoding="utf-8-sig") as stream:
             payload = json.load(stream)
+        # A normal local registry is created once by setup_agent.ps1 and is
+        # intentionally ignored by Git.  Add the built-in classification
+        # helper on upgrade without altering an explicitly selected custom
+        # registry or any of its existing software paths.
+        if not configured and source == self.path:
+            with EXAMPLE_REGISTRY.open("r", encoding="utf-8-sig") as stream:
+                defaults = json.load(stream).get("backends", {})
+            if isinstance(payload.get("backends"), dict) and "classification" not in payload["backends"]:
+                payload["backends"]["classification"] = defaults.get("classification", {})
         self.protocol_version = str(payload.get("protocol_version", "1.0"))
         self.backends: dict[str, dict[str, Any]] = payload.get("backends", {})
 
@@ -267,6 +292,8 @@ def build_local_project_from_inputs(output_project: str, project_id: str, worksp
                                     ecosystem_config: str | None = None, gis_outputs: dict[str, Any] | None = None, w_dat: str | None = None,
                                     model_package: str | None = None, training_roi: str | None = None,
                                     scheme: str = "high_water_coal_7class", w_dat_unit: str | None = None,
+                                    classification_sensor: str | None = None,
+                                    envi_method: str = "maximum_likelihood",
                                     w_dat_convention: str | None = None, workface_boundary: str | None = None,
                                     w_dat_max_distance_m: float = 300.0, subsidence_depth_raster: str | None = None,
                                     patch_size: int | None = None, patch_stride: int | None = None,
@@ -296,7 +323,8 @@ def build_local_project_from_inputs(output_project: str, project_id: str, worksp
         "driver_factors": driver_factors, "mine_boundary": mine_boundary, "carbon_density": carbon_density,
         "ecosystem_criteria": ecosystem_criteria, "ecosystem_config": ecosystem_config, "gis_outputs": gis_outputs,
         "w_dat": w_dat, "model_package": model_package, "training_roi": training_roi,
-        "scheme": scheme, "w_dat_unit": w_dat_unit, "w_dat_convention": w_dat_convention,
+        "scheme": scheme, "classification_sensor": classification_sensor, "envi_method": envi_method,
+        "w_dat_unit": w_dat_unit, "w_dat_convention": w_dat_convention,
         "workface_boundary": workface_boundary, "w_dat_max_distance_m": w_dat_max_distance_m,
         "subsidence_depth_raster": subsidence_depth_raster, "patch_size": patch_size,
         "patch_stride": patch_stride, "patch_band_indexes": patch_band_indexes,
@@ -364,11 +392,16 @@ def validate_analysis_results(validation_file: str, output_report: str | None = 
 
 @mcp.tool()
 def evaluate_lulc_accuracy(samples_file: str, output: str, reference_field: str = "reference",
-                           prediction_field: str = "prediction", backend: str = "project") -> str:
-    """Calculate OA, macro F1/IoU, and per-class precision, recall, F1, and IoU from validation samples."""
+                           prediction_field: str = "prediction", classification_raster: str | None = None,
+                           x_field: str | None = None, y_field: str | None = None,
+                           samples_crs: str | None = None, require_raster_sampling: bool = False,
+                           backend: str = "project") -> str:
+    """Calculate OA/F1/IoU; use raster sampling to bind independent points to a generated LULC product."""
     return json_result(registry.call(backend, "analysis.lulc_accuracy", {
         "samples_file": samples_file, "reference_field": reference_field,
         "prediction_field": prediction_field, "output": output,
+        "classification_raster": classification_raster, "x_field": x_field, "y_field": y_field,
+        "samples_crs": samples_crs, "require_raster_sampling": require_raster_sampling,
     }))
 
 
@@ -395,13 +428,14 @@ def validate_invest_consistency(workflow_raster: str, independent_raster: str, o
 
 @mcp.tool()
 def run_envi_classification(input_raster: str, training_vector: str, output_raster: str,
-                            method: str = "maximum_likelihood", backend: str = "envi") -> str:
-    """Run ENVI supervised classification. Method is maximum_likelihood or minimum_distance."""
+                            sensor: str, method: str = "maximum_likelihood",
+                            scheme: str = "high_water_coal_7class", backend: str = "envi") -> str:
+    """Run ENVI supervised classification with a resolved Landsat 5/8 or Sentinel-2 sensor profile."""
     if method not in {"maximum_likelihood", "minimum_distance"}:
         return json_result({"status": "failed", "error": f"unsupported ENVI method: {method}"})
     return json_result(registry.call(backend, "envi.supervised_classification", {
         "input_raster": input_raster, "training_vector": training_vector,
-        "output_raster": output_raster, "method": method
+        "output_raster": output_raster, "sensor": sensor, "method": method, "scheme": scheme,
     }))
 
 
@@ -411,6 +445,36 @@ def run_arcgis_operations(spec: dict[str, Any], workspace: str, confirm_overwrit
     """Run declarative ArcGIS raster/vector operations using a software bridge rather than an installation path."""
     return json_result(registry.call(backend, "arcgis.run_operations", {
         "spec": spec, "workspace": workspace, "confirm_overwrite": confirm_overwrite,
+    }))
+
+
+@mcp.tool()
+def get_classification_parameters(sensor: str, method: str = "auto",
+                                  scheme: str = "high_water_coal_7class",
+                                  backend: str = "classification") -> str:
+    """Return inspectable Landsat 5, Landsat 8, or Sentinel-2 LULC band, feature, grid, and ENVI method defaults."""
+    return json_result(registry.call(backend, "classification.sensor_parameters", {
+        "sensor": sensor, "method": method, "scheme": scheme,
+    }))
+
+
+@mcp.tool()
+def check_roi_sample_quality(roi_file: str, output: str, class_field: str = "class_id",
+                             role_field: str | None = None, training_value: str = "training",
+                             validation_value: str = "validation",
+                             expected_classes: list[str | int] | None = None,
+                             minimum_rois_per_class: int = 30,
+                             max_class_imbalance_ratio: float = 10.0,
+                             sample_count_field: str | None = None,
+                             require_training_only: bool = False,
+                             backend: str = "classification") -> str:
+    """Check labelled ROI coverage, class balance, and declared train/validation separation before classification."""
+    return json_result(registry.call(backend, "classification.roi_quality", {
+        "roi_file": roi_file, "output": output, "class_field": class_field,
+        "role_field": role_field, "training_value": training_value, "validation_value": validation_value,
+        "expected_classes": expected_classes or [], "minimum_rois_per_class": minimum_rois_per_class,
+        "max_class_imbalance_ratio": max_class_imbalance_ratio, "sample_count_field": sample_count_field,
+        "require_training_only": require_training_only,
     }))
 
 
@@ -467,6 +531,37 @@ def run_invest_ecosystem_model(model: str, datastack: str, workspace: str, backe
         return json_result({"status": "failed", "error": "model must be annual_water_yield, habitat_quality, carbon, sdr, or ndr"})
     return json_result(registry.call(backend, "invest.run_model", {
         "model": model, "datastack": datastack, "workspace": workspace
+    }))
+
+
+@mcp.tool()
+def build_habitat_quality_datastack(habitat_config: dict[str, Any], workspace: str,
+                                    output_datastack: str | None = None,
+                                    lulc_override: str | None = None,
+                                    confirm_overwrite: bool = False,
+                                    backend: str = "invest") -> str:
+    """Build local Habitat Quality threat/sensitivity CSVs and a datastack from LULC plus declared ecological inputs.
+
+    ``habitat_config`` needs ``lulc_path``, ``threats`` (raster, max distance,
+    weight, decay), ``sensitivity`` and ``half_saturation_constant``.  The
+    builder validates LULC codes, threat-grid alignment and all sensitivity
+    values; it never invents ecological parameters.
+    """
+    return json_result(registry.call(backend, "invest.build_habitat_datastack", {
+        "habitat_config": habitat_config, "workspace": workspace,
+        "output_datastack": output_datastack, "lulc_override": lulc_override,
+        "confirm_overwrite": confirm_overwrite,
+    }))
+
+
+@mcp.tool()
+def validate_carbon_density_coverage(lulc_path: str, carbon_density: str,
+                                     require_exact_codes: bool = False,
+                                     backend: str = "invest") -> str:
+    """Check carbon-pool CSV fields, numeric values, missing LULC codes, and extra table codes before InVEST Carbon."""
+    return json_result(registry.call(backend, "invest.validate_carbon_density", {
+        "lulc_path": lulc_path, "carbon_density": carbon_density,
+        "require_exact_codes": require_exact_codes,
     }))
 
 

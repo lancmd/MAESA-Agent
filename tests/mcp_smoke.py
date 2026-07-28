@@ -33,7 +33,9 @@ async def run() -> None:
                 "evaluate_lulc_accuracy", "validate_plus_backcast",
                 "validate_invest_consistency",
                 "run_envi_classification", "run_arcgis_operations", "run_plus_scenario",
-                "run_invest_carbon", "run_invest_ecosystem_model", "validate_lulc_model", "run_pytorch_lulc",
+                "run_invest_carbon", "run_invest_ecosystem_model", "build_habitat_quality_datastack", "validate_carbon_density_coverage",
+                "validate_lulc_model", "run_pytorch_lulc",
+                "get_classification_parameters", "check_roi_sample_quality",
                 "evaluate_ecosystem_services", "analyze_ecosystem_tradeoffs", "compare_ecosystem_scenarios",
                 "calibrate_annual_water_yield", "analyze_ecosystem_drivers", "analyze_ecosystem_sensitivity",
                 "get_job_status", "cancel_job", "list_job_outputs",
@@ -43,8 +45,41 @@ async def run() -> None:
                 raise AssertionError(f"missing MCP tools: {sorted(missing)}")
             result = await session.call_tool("list_backends", {})
             payload = json.loads(result.content[0].text)
-            if not {"envi", "plus", "arcgis", "invest", "pytorch", "project", "ecosystem"}.issubset(payload["backends"]):
+            if not {"envi", "plus", "arcgis", "invest", "pytorch", "classification", "project", "ecosystem"}.issubset(payload["backends"]):
                 raise AssertionError("backend registry is incomplete")
+            profile_result = await session.call_tool("get_classification_parameters", {
+                "sensor": "Sentinel-2", "method": "maximum_likelihood",
+            })
+            profile = json.loads(profile_result.content[0].text)
+            if profile.get("status") != "completed" or profile["result"].get("post_classification_to_analysis_grid") != "majority_10m_to_30m":
+                raise AssertionError(f"sensor classification profile failed: {profile}")
+            # Per-period sensor labels are metadata, not nested file paths.
+            # This verifies the MCP path guard forwards them to the project
+            # builder, which resolves the canonical ENVI profile.
+            sensor_root = ROOT / "outputs" / "mcp_sensor_profile"
+            sensor_root.mkdir(parents=True, exist_ok=True)
+            sensor_image = sensor_root / "image.tif"; sensor_image.write_bytes(b"image")
+            sensor_roi = sensor_root / "roi.gpkg"; sensor_roi.write_bytes(b"roi")
+            sensor_project = sensor_root / "project.json"
+            sensor_build_result = await session.call_tool("build_local_project_from_inputs", {
+                "output_project": str(sensor_project), "project_id": "mcp-sensor-profile", "workspace": str(sensor_root / "runtime"),
+                "task_type": "classification_only", "training_roi": str(sensor_roi),
+                "imagery_periods": [{"year": 2025, "path": str(sensor_image), "sensor": "Sentinel-2"}],
+            })
+            sensor_build = json.loads(sensor_build_result.content[0].text)
+            if sensor_build.get("status") != "completed" or not sensor_project.is_file():
+                raise AssertionError(f"MCP period sensor metadata was rejected: {sensor_build}")
+            built_sensor_project = json.loads(sensor_project.read_text(encoding="utf-8"))
+            if built_sensor_project["inputs"]["imagery_periods"][0].get("sensor") != "sentinel_2_msi":
+                raise AssertionError(f"MCP did not resolve the period sensor: {built_sensor_project}")
+            roi_result = await session.call_tool("check_roi_sample_quality", {
+                "roi_file": str(ROOT / "tests" / "fixtures" / "roi_quality.geojson"),
+                "output": str(ROOT / "outputs" / "mcp_roi_quality.json"), "class_field": "class_id",
+                "role_field": "sample_role", "expected_classes": [1, 2], "minimum_rois_per_class": 1,
+            })
+            roi_quality = json.loads(roi_result.content[0].text)
+            if roi_quality.get("status") != "completed" or roi_quality["result"].get("validation_status") != "completed":
+                raise AssertionError(f"ROI sample quality check failed: {roi_quality}")
             invalid_re = await session.call_tool("run_plus_scenario", {
                 "project": "example", "scenario": "RE", "workspace": str(ROOT / "outputs"), "parameters": {}
             })

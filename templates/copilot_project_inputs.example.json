@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "maesa_project_input_manifest",
+  "available_inputs": {
+    "imagery_periods": [
+      {
+        "year": 2010,
+        "path": "data/imagery_2010.tif",
+        "sensor": "landsat_5_tm",
+        "roi": "data/roi_2010.gpkg",
+        "accuracy": {"validation_samples": "data/validation_2010.csv", "reference_field": "reference", "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}
+      },
+      {
+        "year": 2025,
+        "path": "data/imagery_2025.tif",
+        "sensor": "sentinel_2_msi",
+        "roi": "data/roi_2025.gpkg",
+        "accuracy": {"validation_samples": "data/validation_2025.csv", "reference_field": "reference", "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}
+      }
+    ],
+    "mine_boundary": "data/mine_boundary.gpkg",
+    "carbon_density": "data/carbon_density.csv",
+    "driver_factors": {
+      "dem": {"path": "data/dem_30m.tif", "data_type": "continuous"}
+    }
+  }
+}

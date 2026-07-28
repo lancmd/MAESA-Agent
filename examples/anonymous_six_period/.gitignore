@@ -1,0 +1,6 @@
+data/*.tif
+data/*.geojson
+data/*.csv
+data/*.json
+runtime/
+__pycache__/

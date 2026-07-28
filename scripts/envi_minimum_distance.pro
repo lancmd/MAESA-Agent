@@ -4,9 +4,11 @@ PRO mining_envi_minimum_distance
   inputRasterUri = GETENV('MINING_INPUT_RASTER')
   inputVectorUri = GETENV('MINING_TRAINING_VECTOR')
   outputRasterUri = GETENV('MINING_OUTPUT_RASTER')
+  profileUri = GETENV('MINING_CLASSIFICATION_PROFILE')
 
-  IF (inputRasterUri EQ '') OR (inputVectorUri EQ '') OR (outputRasterUri EQ '') THEN $
-    MESSAGE, 'Set MINING_INPUT_RASTER, MINING_TRAINING_VECTOR, and MINING_OUTPUT_RASTER.'
+  IF (inputRasterUri EQ '') OR (inputVectorUri EQ '') OR (outputRasterUri EQ '') OR (profileUri EQ '') THEN $
+    MESSAGE, 'Set MINING_INPUT_RASTER, MINING_TRAINING_VECTOR, MINING_OUTPUT_RASTER, and MINING_CLASSIFICATION_PROFILE.'
+  IF ~FILE_TEST(profileUri) THEN MESSAGE, 'MINING_CLASSIFICATION_PROFILE does not exist.'
 
   e = ENVI(/HEADLESS)
   inputRaster = e.OpenRaster(inputRasterUri)

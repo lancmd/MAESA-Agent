@@ -1,0 +1,10 @@
+{
+  "type": "FeatureCollection",
+  "crs": {"type": "name", "properties": {"name": "EPSG:32650"}},
+  "features": [
+    {"type": "Feature", "properties": {"class_id": 1, "sample_role": "training"}, "geometry": {"type": "Point", "coordinates": [500000, 3600000]}},
+    {"type": "Feature", "properties": {"class_id": 1, "sample_role": "validation"}, "geometry": {"type": "Point", "coordinates": [500100, 3600100]}},
+    {"type": "Feature", "properties": {"class_id": 2, "sample_role": "training"}, "geometry": {"type": "Point", "coordinates": [500200, 3600200]}},
+    {"type": "Feature", "properties": {"class_id": 2, "sample_role": "validation"}, "geometry": {"type": "Point", "coordinates": [500300, 3600300]}}
+  ]
+}

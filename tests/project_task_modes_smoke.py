@@ -16,16 +16,23 @@ from project_validator import validate  # noqa: E402
 
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
-    for name in ("image_2020.tif", "image_2025.tif", "lulc_2020.tif", "lulc_2025.tif", "roi.gpkg", "carbon.csv",
-                 "criteria.csv", "ecosystem.json", "base.aprx", "dem.tif"):
+    for name in ("image_2020.tif", "image_2025.tif", "lulc_2020.tif", "lulc_2025.tif", "roi.gpkg", "roi_2020.gpkg", "roi_2025.gpkg",
+                 "samples_2020.csv", "samples_2025.csv", "carbon.csv", "criteria.csv", "ecosystem.json", "base.aprx", "dem.tif"):
         (root / name).write_text("fixture", encoding="utf-8")
-    imagery = [{"year": 2020, "path": str(root / "image_2020.tif")}, {"year": 2025, "path": str(root / "image_2025.tif")}]
+    imagery = [{"year": 2020, "path": str(root / "image_2020.tif"), "sensor": "landsat_8_oli"},
+               {"year": 2025, "path": str(root / "image_2025.tif"), "sensor": "sentinel_2_msi"}]
     history = [{"year": 2020, "path": str(root / "lulc_2020.tif")}, {"year": 2025, "path": str(root / "lulc_2025.tif")}]
     modes = {
         "classification_only": {"imagery_periods": imagery, "training_roi": str(root / "roi.gpkg")},
         "lulc_change_analysis": {"historical_lulc_periods": history},
         "plus_only": {"historical_lulc_periods": history, "driver_factors": {"dem": str(root / "dem.tif")}},
         "invest_only": {"historical_lulc_periods": history, "carbon_density": str(root / "carbon.csv")},
+        "classification_invest": {"imagery_periods": [
+            {"year": 2020, "path": str(root / "image_2020.tif"), "sensor": "landsat_8_oli", "roi": str(root / "roi_2020.gpkg"),
+             "accuracy": {"validation_samples": str(root / "samples_2020.csv"), "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}},
+            {"year": 2025, "path": str(root / "image_2025.tif"), "sensor": "sentinel_2_msi", "roi": str(root / "roi_2025.gpkg"),
+             "accuracy": {"validation_samples": str(root / "samples_2025.csv"), "x_field": "x", "y_field": "y", "samples_crs": "EPSG:32650"}},
+        ], "carbon_density": str(root / "carbon.csv")},
         "ecosystem_service_only": {"ecosystem_criteria": str(root / "criteria.csv"), "ecosystem_config": str(root / "ecosystem.json")},
         "mapping_only": {"gis_outputs": {"aprx": str(root / "base.aprx"), "layout_name": "Layout", "png": "outputs/map.png",
                                          "layers": [{"path": "outputs/ready.tif", "path_scope": "workspace"}]}},
@@ -33,6 +40,7 @@ with tempfile.TemporaryDirectory() as temporary:
     expected = {
         "classification_only": (True, False, False, False, False), "lulc_change_analysis": (False, False, False, False, False),
         "plus_only": (False, True, False, False, False), "invest_only": (False, False, True, False, False),
+        "classification_invest": (True, False, True, False, False),
         "ecosystem_service_only": (False, False, False, True, False), "mapping_only": (False, False, False, False, True),
     }
     for task_type, values in modes.items():

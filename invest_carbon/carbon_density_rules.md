@@ -54,3 +54,16 @@ InVEST 碳密度使用 `Mg C/ha`，等同于 `t C/hm²`。
 - 空白与真实 0 可区分；
 - 沉陷积水与自然水体分别取值时有分类精度支持；
 - 来源和换算可追溯。
+
+## 7. 自动类别匹配
+
+运行前可调用 MCP `validate_carbon_density_coverage`，或运行
+`scripts/carbon_density_contract.py --carbon-density carbon.csv --lulc LULC_2025.tif --output coverage.json`。
+检查会同时报告：
+
+- CSV 是否具有 `lucode`、`c_above`、`c_below`、`c_soil`、`c_dead`；
+- `lucode` 是否为唯一整数，四个碳库是否为有限非负数；
+- LULC 中缺少碳密度记录的类别（错误，不能运行 Carbon）；
+- 碳密度表中该期 LULC 未出现的类别（默认警告）。
+
+对六期或多情景项目，同一张碳密度表可以包含某一时期未出现的地类，因此“表中多出类别”默认不阻断运行。只有在进行单期一对一审计时才设置 `require_exact_codes: true`。每个 LULC 预检报告都会保留实际类别、缺失类别和多出类别，便于追溯。

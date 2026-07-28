@@ -49,6 +49,7 @@
     "output_confidence": "outputs/lulc_confidence.tif",
     "output_low_confidence": null,
     "low_confidence_threshold": null,
+    "sensor": null,
     "patch_classifier": {
       "enabled": false,
       "patch_size": null,
@@ -59,6 +60,18 @@
       "allow_as_lulc": false
     },
     "envi_method": "maximum_likelihood",
+    "roi_quality": {
+      "enabled": true,
+      "class_field": "class_id",
+      "role_field": null,
+      "training_value": "training",
+      "validation_value": "validation",
+      "expected_classes": [],
+      "minimum_rois_per_class": 30,
+      "max_class_imbalance_ratio": 10.0,
+      "sample_count_field": null,
+      "output": "outputs/validation/roi_quality_{year}.json"
+    },
     "accuracy": {
       "enabled": false,
       "validation_samples": null,
@@ -98,11 +111,16 @@
   "invest": {
     "enabled": false,
     "output_workspace": "outputs/invest",
+    "multiperiod_summary": {
+      "enabled": true,
+      "output_table": "outputs/statistics/invest_multiperiod_summary.csv",
+      "output_figure": "outputs/figures/invest_multiperiod_change.svg"
+    },
     "datastack": null,
     "models": {
       "carbon": {"enabled": true, "provided_datastack": null},
       "annual_water_yield": {"enabled": false, "datastack_template": null, "expected_outputs": [], "service_field": "water_yield_m3", "service_unit": "m3", "service_aggregation": "depth_mm_to_m3"},
-      "habitat_quality": {"enabled": false, "datastack_template": null, "expected_outputs": [], "service_field": "habitat_quality", "service_unit": "index_0_to_1", "service_aggregation": "mean"},
+      "habitat_quality": {"enabled": false, "datastack_template": null, "datastack_builder": null, "expected_outputs": [], "service_field": "habitat_quality", "service_unit": "index_0_to_1", "service_aggregation": "mean"},
       "sediment_delivery_ratio": {"enabled": false, "datastack_template": null, "expected_outputs": []},
       "nutrient_delivery_ratio": {"enabled": false, "datastack_template": null, "expected_outputs": []}
     }

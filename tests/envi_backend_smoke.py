@@ -26,6 +26,10 @@ assert capability["status"] == "completed", capability
 assert capability["result"]["mode"] == "local-command", capability
 assert capability["result"]["local_only"] is True, capability
 assert set(capability["result"]["methods"]) == {"maximum_likelihood", "minimum_distance"}, capability
+assert {item["sensor_id"] for item in capability["result"]["supported_sensors"]} == {
+    "landsat_5_tm", "landsat_8_oli", "sentinel_2_msi"}, capability
 invalid = call("envi.supervised_classification", {"method": "random_forest"})
 assert invalid["status"] == "failed" and "unsupported ENVI method" in invalid["error"], invalid
+invalid_sensor = call("envi.supervised_classification", {"method": "maximum_likelihood", "sensor": "MODIS"})
+assert invalid_sensor["status"] == "failed" and "unsupported sensor" in invalid_sensor["error"], invalid_sensor
 print(json.dumps({"status": "completed", "checks": ["local ENVI command bridge", "method contract"]}))
