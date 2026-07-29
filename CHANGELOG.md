@@ -2,6 +2,11 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.3.1 - 2026-07-29
+
+- Fixed clean Windows CI runs: smoke tests now create their ignored `outputs/` scratch directory instead of assuming it exists.
+- Made the Copilot nested-input assertion compare normalized local paths, avoiding Windows drive-letter and path-casing differences.
+
 ## 0.3.0 - 2026-07-27
 
 - Added the `classification_invest` task type for multi-period LULC classification followed by Carbon and Habitat Quality evaluation, without requiring PLUS.

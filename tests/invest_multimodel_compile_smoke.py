@@ -13,7 +13,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from project_workflow import compile_workflow  # noqa: E402
 
 
-with tempfile.TemporaryDirectory(dir=ROOT / "outputs") as temporary:
+OUTPUT_ROOT = ROOT / "outputs"
+OUTPUT_ROOT.mkdir(exist_ok=True)
+
+with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
     root = Path(temporary)
     data = root / "data"; data.mkdir()
     for name in ("lulc_1.tif", "lulc_2.tif", "slope.tif"):

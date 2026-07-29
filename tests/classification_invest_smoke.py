@@ -15,7 +15,10 @@ from project_validator import validate  # noqa: E402
 from project_workflow import compile_workflow  # noqa: E402
 
 
-with tempfile.TemporaryDirectory(dir=ROOT / "outputs") as temporary:
+OUTPUT_ROOT = ROOT / "outputs"
+OUTPUT_ROOT.mkdir(exist_ok=True)
+
+with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
     root = Path(temporary)
     data = root / "data"; data.mkdir()
     periods: list[dict[str, object]] = []

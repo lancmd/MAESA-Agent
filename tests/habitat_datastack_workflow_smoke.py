@@ -23,7 +23,10 @@ def raster(path: Path, values: list[list[int]]) -> None:
         sink.write(np.asarray(values, dtype="int16"), 1)
 
 
-with tempfile.TemporaryDirectory(dir=ROOT / "outputs") as temporary:
+OUTPUT_ROOT = ROOT / "outputs"
+OUTPUT_ROOT.mkdir(exist_ok=True)
+
+with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
     root = Path(temporary); data = root / "data"; data.mkdir()
     raster(data / "lulc_2000.tif", [[1, 2], [1, 2]])
     raster(data / "lulc_2005.tif", [[1, 2], [2, 1]])

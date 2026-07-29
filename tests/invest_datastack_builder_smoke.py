@@ -29,7 +29,10 @@ def raster(path: Path, values: list[list[int]]) -> None:
         sink.write(np.array(values, dtype="int16"), 1)
 
 
-with tempfile.TemporaryDirectory(dir=ROOT / "outputs") as temporary:
+OUTPUT_ROOT = ROOT / "outputs"
+OUTPUT_ROOT.mkdir(exist_ok=True)
+
+with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
     root = Path(temporary)
     lulc = root / "lulc.tif"; threat = root / "road.tif"
     raster(lulc, [[1, 2], [1, 2]]); raster(threat, [[1, 0], [0, 1]])

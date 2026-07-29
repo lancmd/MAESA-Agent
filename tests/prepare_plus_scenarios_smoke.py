@@ -13,7 +13,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from prepare_plus_scenarios import prepare  # noqa: E402
 
 
-with tempfile.TemporaryDirectory(dir=ROOT / "outputs") as temporary:
+OUTPUT_ROOT = ROOT / "outputs"
+OUTPUT_ROOT.mkdir(exist_ok=True)
+
+with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
     root = Path(temporary); data = root / "data"; data.mkdir()
     for name in ("a.tif", "b.tif", "driver.tif", "subsidence.tif"):
         (data / name).write_bytes(b"placeholder")

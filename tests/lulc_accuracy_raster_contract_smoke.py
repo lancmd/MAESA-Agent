@@ -17,7 +17,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from lulc_accuracy import evaluate  # noqa: E402
 
 
-with tempfile.TemporaryDirectory(dir=ROOT / "outputs") as temporary:
+OUTPUT_ROOT = ROOT / "outputs"
+OUTPUT_ROOT.mkdir(exist_ok=True)
+
+with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
     root = Path(temporary)
     raster = root / "lulc.tif"
     with rasterio.open(raster, "w", driver="GTiff", width=2, height=2, count=1, dtype="uint8",

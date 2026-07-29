@@ -16,6 +16,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from maesa_copilot import (controlled_plan, execute_project_creation_with_mcp, project_creation_contract,
                            project_creation_prompt, validate_execution_plan,
                            validate_project_creation_plan)  # noqa: E402
+
+
+def normal_windows_path(value: str | Path) -> str:
+    """Compare local Windows paths without relying on drive-letter casing."""
+    return os.path.normcase(os.path.normpath(str(value)))
+
+
 with tempfile.TemporaryDirectory() as temporary:
     provider = Path(temporary) / "provider.json"
     provider.write_text(json.dumps({"provider": "ollama", "base_url": "http://127.0.0.1:11434", "model": "qwen2.5:7b-instruct",
@@ -44,8 +51,9 @@ with tempfile.TemporaryDirectory() as temporary:
     }
     nested_project = root / "project.json"; nested_project.write_text(json.dumps(nested), encoding="utf-8")
     nested_plan = controlled_plan(nested_project, "nested paths")
-    assert str(root / "inputs" / "image_2020.tif") in nested_plan["expected_inputs"], nested_plan
-    assert str(root / "inputs" / "dem.tif") in nested_plan["expected_inputs"], nested_plan
+    normalized_inputs = {normal_windows_path(value) for value in nested_plan["expected_inputs"]}
+    assert normal_windows_path(root / "inputs" / "image_2020.tif") in normalized_inputs, nested_plan
+    assert normal_windows_path(root / "inputs" / "dem.tif") in normalized_inputs, nested_plan
     validation_step = nested_plan["steps"][-1]["arguments"]
     assert validation_step["validation_file"] == str(root / "evidence" / "custom_evidence.json"), validation_step
     assert validation_step["output_report"] == str(root / "runtime" / "reports" / "custom_validation.json"), validation_step
