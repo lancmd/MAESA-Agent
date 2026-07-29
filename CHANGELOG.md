@@ -2,6 +2,10 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.3.2 - 2026-07-29
+
+- Completed the Windows CI repair by making the Copilot nested-input smoke assertion independent of the runner's temporary absolute path.
+
 ## 0.3.1 - 2026-07-29
 
 - Fixed clean Windows CI runs: smoke tests now create their ignored `outputs/` scratch directory instead of assuming it exists.

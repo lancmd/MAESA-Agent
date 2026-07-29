@@ -18,9 +18,9 @@ from maesa_copilot import (controlled_plan, execute_project_creation_with_mcp, p
                            validate_project_creation_plan)  # noqa: E402
 
 
-def normal_windows_path(value: str | Path) -> str:
-    """Compare local Windows paths without relying on drive-letter casing."""
-    return os.path.normcase(os.path.normpath(str(value)))
+def normalized_path_suffix(value: str | Path) -> str:
+    """Compare a project-relative Windows suffix, not a temporary root path."""
+    return str(value).replace("/", "\\").casefold()
 
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -51,9 +51,9 @@ with tempfile.TemporaryDirectory() as temporary:
     }
     nested_project = root / "project.json"; nested_project.write_text(json.dumps(nested), encoding="utf-8")
     nested_plan = controlled_plan(nested_project, "nested paths")
-    normalized_inputs = {normal_windows_path(value) for value in nested_plan["expected_inputs"]}
-    assert normal_windows_path(root / "inputs" / "image_2020.tif") in normalized_inputs, nested_plan
-    assert normal_windows_path(root / "inputs" / "dem.tif") in normalized_inputs, nested_plan
+    normalized_inputs = {normalized_path_suffix(value) for value in nested_plan["expected_inputs"]}
+    assert any(value.endswith("\\inputs\\image_2020.tif") for value in normalized_inputs), nested_plan
+    assert any(value.endswith("\\inputs\\dem.tif") for value in normalized_inputs), nested_plan
     validation_step = nested_plan["steps"][-1]["arguments"]
     assert validation_step["validation_file"] == str(root / "evidence" / "custom_evidence.json"), validation_step
     assert validation_step["output_report"] == str(root / "runtime" / "reports" / "custom_validation.json"), validation_step
