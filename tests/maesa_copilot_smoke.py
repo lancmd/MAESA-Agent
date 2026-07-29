@@ -55,8 +55,8 @@ with tempfile.TemporaryDirectory() as temporary:
     assert any(value.endswith("\\inputs\\image_2020.tif") for value in normalized_inputs), nested_plan
     assert any(value.endswith("\\inputs\\dem.tif") for value in normalized_inputs), nested_plan
     validation_step = nested_plan["steps"][-1]["arguments"]
-    assert validation_step["validation_file"] == str(root / "evidence" / "custom_evidence.json"), validation_step
-    assert validation_step["output_report"] == str(root / "runtime" / "reports" / "custom_validation.json"), validation_step
+    assert normalized_path_suffix(validation_step["validation_file"]).endswith("\\evidence\\custom_evidence.json"), validation_step
+    assert normalized_path_suffix(validation_step["output_report"]).endswith("\\runtime\\reports\\custom_validation.json"), validation_step
 
 with tempfile.TemporaryDirectory() as temporary:
     root = Path(temporary)
