@@ -2,6 +2,11 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.4.0 - 2026-07-29
+
+- Replaced the scattered ArcGIS, ENVI, PLUS, InVEST, data-source and Copilot guides with seven task-centred documents under `docs/`.
+- Simplified the README and Skill entry point; runtime bridges, schemas, templates, examples and regression tests remain unchanged.
+
 ## 0.3.5 - 2026-07-29
 
 - Serialised local job-record replacement and added bounded retries for Windows file handles, preventing the job launcher and its worker from racing on the same registry record.

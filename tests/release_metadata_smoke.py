@@ -9,7 +9,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 package = tomllib.loads((ROOT / "mcp_server" / "pyproject.toml").read_text(encoding="utf-8"))
-assert version == package["project"]["version"] == "0.3.5"
+assert version == package["project"]["version"] == "0.4.0"
 assert "MIT License" in (ROOT / "LICENSE").read_text(encoding="utf-8")
 assert version in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-print('{"status":"completed","checks":["version","license","changelog"]}')
+
+guides = [
+    "project.md", "classification.md", "spatial.md", "plus.md",
+    "invest-ecosystem.md", "runtime.md", "reference-data.md",
+]
+for guide in guides:
+    assert (ROOT / "docs" / guide).is_file(), guide
+
+for legacy_directory in ("arcgis_steps", "envi_classification", "plus_model", "invest_carbon",
+                         "ecosystem_service", "open_gis_workflows", "execution"):
+    assert not list((ROOT / legacy_directory).glob("*.md")), legacy_directory
+
+entry_points = ((ROOT / "README.md").read_text(encoding="utf-8") +
+                (ROOT / "SKILL.md").read_text(encoding="utf-8"))
+assert "docs/project.md" in entry_points and "docs/invest-ecosystem.md" in entry_points
+assert "plus_model/" not in entry_points and "arcgis_steps/" not in entry_points
+print('{"status":"completed","checks":["version","license","changelog","documentation-surface"]}')

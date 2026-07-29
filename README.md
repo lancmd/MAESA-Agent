@@ -1,186 +1,97 @@
 <p align="center">
-  <img src="assets/maesa-banner.svg" alt="MAESA Agent banner" width="100%" />
+  <img src="assets/maesa-banner.svg" alt="MAESA Agent" width="100%" />
 </p>
 
-<p align="center">
-  <strong>Local-first LLM agent for mining-area ecological space analysis</strong>
-</p>
-
-<p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#workflow">Workflow</a> ·
-  <a href="#llm-copilot">LLM Copilot</a> ·
-  <a href="#local-software">Local software</a> ·
-  <a href="#validation">Validation</a>
-</p>
+<p align="center"><strong>MAESA Agent · Local-first mining ecological analysis</strong></p>
 
 # MAESA Agent
 
-**Mining Area Ecological Space Analysis Agent** turns a mining-area research workflow into a local, reproducible product. Provide local data and a `project.json`; MAESA validates the spatial contract, compiles a resumable workflow, calls installed desktop software locally, and records the outputs and evidence.
+MAESA（Mining Area Ecological Space Analysis）把矿区遥感与生态服务研究组织成可验证的本地工作流。用户提供本地数据和 `project.json`，Agent 校验空间数据、编译可恢复任务、调用已安装的软件并记录全部成果来源。
 
-It is built for multi-period LULC, Sankey transitions, PLUS ND/UD/EP/RE scenarios, InVEST carbon and ecosystem services, subsidence-water carbon, ecological-service scoring, and ArcGIS Pro maps.
+它覆盖多期土地利用分类、转移 Sankey、PLUS ND/UD/EP/RE、InVEST 碳储量/水源供给/生境质量、沉陷积水复合碳库、生态服务评价和 ArcGIS Pro 出图。
 
-> **Local-first by design.** MCP, bridge processes and GIS software run on the same computer. Remote software control is rejected. A cloud LLM can be opted into for text planning, but never gains a remote route to ArcGIS Pro, ENVI, PLUS or InVEST.
+> **Local-first。** MCP 仅连接本机服务；ArcGIS Pro、ENVI、PLUS 和 InVEST 不接受公网远程控制。云端 LLM 如被启用，也只负责受约束的文本规划。
 
-## Workflow
+## 能力边界
 
-<p align="center">
-  <img src="assets/maesa-workflow.svg" alt="MAESA bilingual local-first workflow" width="100%" />
-</p>
-
-## What ships today
-
-| Capability | Local implementation | Result state |
+| 模块 | 本机实现 | 结果 |
 |---|---|---|
-| Project builder, input validation, spatial preflight, manifests and resume | Python | Automatic |
-| PyTorch semantic segmentation and registered ResNet-50 patch classification | Local PyTorch adapter | Patch-grid result stays `pending_validation` until independently assessed |
-| ENVI supervised classification | Local IDL command bridge | Requires a licensed ENVI/IDL installation |
-| LULC transitions, Sankey and standalone SVG maps | Python | Automatic |
-| PLUS ND / UD / EP / RE | HPSCIL snapshot GUI bridge | pywinauto first; image-template fallback; first-use UI calibration required |
-| InVEST Carbon | Local InVEST CLI | Automatic when LULC and carbon table are valid |
-| Annual Water Yield / Habitat Quality | Local InVEST CLI and datastack contracts | Automatic when model parameters are supplied |
-| Subsidence-water volume and composite carbon | ArcPy | DEM, water level and vertical datum required |
-| Min-Max / AHP, trade-offs, sensitivity, comparison, GeoDetector | Python | Automatic |
-| Publication layouts | ArcGIS Pro `compose_layout` | Adds declared stage outputs, checks renderer categories and exports preview/PDF/PNG |
+| 项目构建、空间预检、清单和续跑 | Python | 自动 |
+| ENVI 监督分类 | IDL/ENVI 桥接 | 需本机许可 |
+| PyTorch 分类 | 分割模型或已登记 ResNet-50 图块分类器 | 后者须独立验证 |
+| PLUS 四情景 | 官方快照 GUI 桥接 | 首次须校准界面 |
+| InVEST 与生态服务 | 本机 CLI/Python | 输入完整时自动 |
+| 制图与沉陷库容 | ArcPy / ArcGIS Pro | 需本机许可 |
 
-`prepared`, `pending_validation` and `waiting_interactive` are intentional incomplete states; they are never reported as completed analysis.
+`prepared`、`waiting_interactive` 和 `pending_validation` 均表示尚未完成，不会被写成分析成功。
 
-## Quick start
-
-### 1. Install as a Codex Skill
+## 快速开始
 
 ```powershell
 npx skills add lancmd/MAESA-Agent -g
-```
-
-If Node.js is unavailable, install a supported Node.js runtime first, or use Codex Desktop's bundled runtime for the same command.
-
-### 2. Set up the local runtime
-
-```powershell
 cd MAESA-Agent
 .\scripts\setup_agent.ps1 -WithPyTorch -WithPlusGui
 .\scripts\start_agent_mcp.ps1
 ```
 
-The service listens only on `http://127.0.0.1:8765/mcp`. Point a compatible Agent client to [agents/openai.yaml](agents/openai.yaml), or let Codex invoke the Skill directly.
-
-### 3. Create and run a project
+创建或检查项目：
 
 ```powershell
 python .\scripts\project_validator.py --project .\project.json
 python .\scripts\project_workflow.py --project .\project.json --run
 ```
 
-For a controlled natural-language route from a reviewed data inventory to
-`project.json`, see [Copilot project creation](docs/copilot_project_creation.md).
-Sensor-specific Landsat/Sentinel defaults and local ENVI XML/GeoJSON ROI
-checks are documented in [classification profiles and ROI quality](docs/classification_profiles_and_roi.md).
+工作流会生成 `workspace/generated/workflow_job.json`；用户无需手写 job 文件。也可以由 Copilot 根据已审核的本地输入清单创建确认式执行计划，详见 [项目与 Copilot](docs/project.md)。
 
-The compiler generates `workspace/generated/workflow_job.json`; users do not maintain a separate job file. See [the input contract](docs/agent_input_contract.md), the [compact synthetic demo](examples/huaibei_demo/README.md), and the [six-period classification/InVEST demo](examples/anonymous_six_period/README.md).
+## 最小数据交接
 
-## LLM Copilot
+按任务启用模块，而不是一次性提供全部数据。
 
-MAESA is an **LLM-enabled agent product**, not a repository that trains model weights from scratch.
+- 分类：各期影像，逐期 ROI 或模型包，以及独立验证样本；
+- PLUS：至少两期对齐 LULC、驱动因子、矿区边界；RE 还需要正向下沉陷深度栅格或受约束的 `w.dat`；
+- Carbon：LULC 和覆盖全部类别编码的碳密度 CSV；
+- Water Yield：降水、ET0、土壤层、流域和生物物理表；
+- Habitat Quality：威胁因子栅格、威胁表和敏感性表；
+- 制图：可选 `.aprx`、布局和 `.lyrx`。
 
-- When used from Codex, Claude, Qwen or another Agent client, the host Agent is the LLM; MAESA provides the domain workflow and local tools.
-- For a standalone assistant, MAESA includes an optional Copilot adapter for a local Ollama model or an OpenAI-compatible endpoint.
-- The Copilot creates a constrained JSON execution plan, shows its inputs/steps/outputs, and calls only allowlisted local MCP tools after `--confirm`.
-- The local MCP service remains the only path to desktop GIS tools; an LLM never receives arbitrary shell-command authority.
+完整字段与任务模式见 [项目与 Copilot](docs/project.md)，分类样本和传感器参数见 [分类与精度](docs/classification.md)。
 
-```powershell
-Copy-Item .\config\llm_provider.example.json .\config\llm_provider.json
-python .\scripts\maesa_copilot.py --message "检查项目缺少哪些输入" --dry-run
-```
+## 本机软件
 
-Read [LLM Copilot](docs/llm_copilot.md) before enabling a cloud endpoint or downloading a local model. Choose a focused [task mode](docs/task_modes.md) when the project is not a full chain.
+个人路径写入被忽略的 `config/local_paths.json` 或环境变量，不提交到仓库。
 
-## Data handoff
+| 软件 | 环境变量 |
+|---|---|
+| ArcGIS Pro | `ARCGIS_PROPY`、`ARCGIS_PRO_EXE` |
+| ENVI / IDL | `IDL_EXE` |
+| PLUS | `PLUS_V142_EXECUTABLE` |
+| InVEST | `INVEST_CLI` |
 
-Enable only the modules you need. The usual full chain needs:
+运行 `python .\scripts\workflow_agent.py probe` 查看本机可用能力。
 
-- dated local imagery plus either ENVI ROI samples, a segmentation model package, or a registered ResNet-50 patch-classifier package;
-- mine boundary, two or more LULC periods, and typed PLUS driver factors;
-- carbon-density CSV;
-- a positive-down subsidence-depth GeoTIFF **or** `w.dat` with its unit, convention, scope and maximum interpolation distance;
-- Water Yield precipitation, ET0, soil layers, watershed and biophysical table;
-- Habitat Quality threats, threat rasters and sensitivity table;
-- optional ArcGIS Pro `.aprx`, layout and `.lyrx` files for publication maps.
+## 验证与发布前测试
 
-The project fixes a 30 m projected analysis grid. Ten metre categorical LULC is aggregated by majority; continuous drivers use bilinear resampling; aspect uses nearest-neighbour treatment.
-
-For `classification_invest`, every imagery period carries its own training ROI and a separate validation sample table. Validation samples include reference class, x/y coordinates and their CRS, so OA, F1 and IoU are sampled from the LULC raster produced for that same period rather than read from a prefilled prediction column.
-
-The registered ResNet-50 package is an RGB **image/patch classifier**, not a pixel-wise segmentation network. Its output is an explicit coarse patch grid that aggregates to the ordinary six-class scheme and remains `pending_validation`. See [the PyTorch model guide](deep_learning/pytorch_workflow.md) before using it in a project.
-
-## Local software
-
-Personal installations stay in ignored `config/local_paths.json` or environment variables. MAESA also discovers a standard ArcGIS Pro Windows registry installation, so a personal installation path is not committed to the repository.
-
-| Software | Environment variable | Notes |
-|---|---|---|
-| ArcGIS Pro | `ARCGIS_PROPY`, `ARCGIS_PRO_EXE` | ArcPy processing and layout export |
-| ENVI / IDL | `IDL_EXE` | Licensed ENVI headless classification |
-| PLUS | `PLUS_V142_EXECUTABLE` | Local GUI bridge; calibration profile is ignored locally |
-| InVEST | `INVEST_CLI` | Carbon, Water Yield, Habitat and optional models |
-
-Run `python .\scripts\workflow_agent.py probe` to see what this computer can execute.
-
-## Validation
-
-Every project emits `outputs_manifest.json`, `provenance.json`, `validation_summary.json` and `agent_state.json`. The acceptance layer checks:
-
-- LULC — OA, Macro-F1, Macro-IoU, class precision/recall/F1/IoU;
-- PLUS — FoM, class accuracy and multi-seed stability;
-- InVEST — independent-run consistency where available;
-- ecosystem services — standardisation ranges, AHP consistency and sensitivity;
-- maps — layers, renderer/category coverage, preview diagnostics, extent, resolution and a separate visual-review state.
-
-Run the portable suite before publishing a change:
+每个项目产生 `outputs_manifest.json`、`provenance.json`、`validation_summary.json` 和 `agent_state.json`。验收包括 LULC 的 OA/F1/IoU、PLUS 的 FoM/类别精度/随机种子稳定性、InVEST 一致性、生态服务敏感性和地图图层/范围/分辨率检查。
 
 ```powershell
 python -m pytest .\tests\test_smoke_suite.py -q
 python .\tests\mcp_smoke.py
 ```
 
-The GitHub Actions workflow runs syntax checks, the contract suite and the MCP smoke test on Windows. Commercial desktop software is verified locally with small synthetic rasters, never in public CI.
+GitHub Actions 会在 Windows Python 3.11 和 3.12 上运行上述可移植测试；商业 GIS 软件仅在本机小栅格测试。
 
-## Project structure
+## 目录
 
 ```text
 MAESA-Agent/
-├── agents/                 # Agent-client connection definition
-├── config/                 # templates; local paths and LLM config are ignored
-├── docs/                   # input, software and Copilot contracts
-├── mcp_server/             # local MCP service
-├── scripts/                # workflow compiler and software bridges
-├── plus_model/             # PLUS method contracts
-├── invest_carbon/          # carbon and subsidence-water rules
-├── ecosystem_service/      # service-model and evaluation rules
-├── arcgis_steps/           # ArcGIS Pro processing and layout rules
-├── envi_classification/    # ENVI classification rules
-├── examples/huaibei_demo/  # anonymous synthetic demo
-├── examples/anonymous_six_period/ # six-period classification/InVEST contract demo
-└── tests/                  # portable and local integration checks
+├── agents/       # Agent 客户端连接定义
+├── config/       # 本机路径与 GUI 配置示例
+├── docs/         # 七份任务中心文档
+├── mcp_server/   # 本地 MCP 服务
+├── scripts/      # 工作流编译器和软件桥接
+├── templates/    # 项目与数据栈模板
+├── examples/     # 匿名合成示例
+└── tests/        # 可移植与本机集成测试
 ```
 
-## License and scope
-
-MAESA-Agent 0.3.5 is released under the [MIT License](LICENSE). The license covers this repository's source code and documentation only. MAESA orchestrates installed software; it does not redistribute ArcGIS Pro, ENVI, PLUS or InVEST licenses, nor does it fabricate model inputs or scientific conclusions. Use independently validated data, documented coefficients and appropriate software licenses for research results.
-
-### Optional real ResNet-50 integration test
-
-The repository does not include research imagery or model weights. After installing the PyTorch runtime, set local paths through environment variables and run the opt-in test:
-
-```powershell
-$env:MAESA_RUN_REGISTERED_RESNET50 = "1"
-$env:MAESA_RESNET50_MODEL_PACKAGE = "D:\models\lulc-resnet50"
-$env:MAESA_RESNET50_TEST_RASTER = "D:\data\aligned_30m_rgb.tif"
-.\.venv\Scripts\python.exe .\tests\registered_resnet50_real_inference.py
-```
-
-The test verifies the registered SHA-256 fingerprint, runs patch-grid inference, and checks the output class range. It does not treat the patch grid as independently validated pixel-wise LULC.
-
-The tiny local InVEST water-yield and habitat-quality integration fixture is likewise opt-in: set `MAESA_RUN_LOCAL_INVEST_INTEGRATION=1` before running `tests/invest_ecosystem_integration_smoke.py`. This prevents a normal contract suite from launching a licensed desktop installation unexpectedly.
-
-For a final workstation acceptance run after PLUS GUI calibration, set `MAESA_RUN_LOCAL_FULL_CHAIN=1` and `MAESA_LOCAL_FULL_CHAIN_PROJECT` to an approved local `project.json`, then run `tests/local_full_chain_regression.py`. It requires the workflow, final analysis validation, provenance, and output manifest to finish as `completed`.
+MAESA-Agent 0.4.0 采用 [MIT License](LICENSE)。它编排已安装的软件，不分发 ArcGIS Pro、ENVI、PLUS 或 InVEST 的许可，也不替代独立的数据和科研验证。
