@@ -85,7 +85,7 @@ with tempfile.TemporaryDirectory() as temporary:
     }
     checked = validate_project_creation_plan(candidate, manifest, output_project, str(workspace))
     assert checked["status"] == "valid", checked
-    assert checked["normalized_plan"]["build_arguments"]["model_package"] == str(model), checked
+    assert normalized_path_suffix(checked["normalized_plan"]["build_arguments"]["model_package"]).endswith("\\inputs\\model"), checked
     previous_input_root, previous_output_root = os.environ.get("MINING_GIS_INPUT_ROOTS"), os.environ.get("MINING_GIS_OUTPUT_ROOT")
     os.environ["MINING_GIS_INPUT_ROOTS"], os.environ["MINING_GIS_OUTPUT_ROOT"] = str(root), str(root)
     try:

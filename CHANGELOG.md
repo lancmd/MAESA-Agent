@@ -2,6 +2,10 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.3.4 - 2026-07-29
+
+- Finished the remaining Windows Copilot smoke assertion by checking the model-package location relative to the project input directory instead of comparing a temporary absolute path.
+
 ## 0.3.3 - 2026-07-29
 
 - Finished the Windows CI path-stability cleanup by checking Copilot validation evidence and output-report paths by their project-relative suffixes.

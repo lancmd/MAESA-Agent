@@ -4,6 +4,7 @@ outputs/
 jobs/
 .venv/
 mcp_server/.venv/
+mcp_server/dist/
 interfaces/backend_registry.json
 config/local_paths.json
 config/plus_v142_ui_profile.json
