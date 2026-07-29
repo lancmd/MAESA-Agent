@@ -166,7 +166,7 @@ MAESA-Agent/
 
 ## License and scope
 
-MAESA-Agent 0.3.4 is released under the [MIT License](LICENSE). The license covers this repository's source code and documentation only. MAESA orchestrates installed software; it does not redistribute ArcGIS Pro, ENVI, PLUS or InVEST licenses, nor does it fabricate model inputs or scientific conclusions. Use independently validated data, documented coefficients and appropriate software licenses for research results.
+MAESA-Agent 0.3.5 is released under the [MIT License](LICENSE). The license covers this repository's source code and documentation only. MAESA orchestrates installed software; it does not redistribute ArcGIS Pro, ENVI, PLUS or InVEST licenses, nor does it fabricate model inputs or scientific conclusions. Use independently validated data, documented coefficients and appropriate software licenses for research results.
 
 ### Optional real ResNet-50 integration test
 

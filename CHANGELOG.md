@@ -2,6 +2,10 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.3.5 - 2026-07-29
+
+- Serialised local job-record replacement and added bounded retries for Windows file handles, preventing the job launcher and its worker from racing on the same registry record.
+
 ## 0.3.4 - 2026-07-29
 
 - Finished the remaining Windows Copilot smoke assertion by checking the model-package location relative to the project input directory instead of comparing a temporary absolute path.

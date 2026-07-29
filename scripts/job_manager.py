@@ -36,10 +36,55 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
+    """Atomically update a local registry record across Windows processes.
+
+    ``submit`` and ``job_worker`` briefly overlap while a background job starts.
+    NTFS can reject a simultaneous ``os.replace`` with ``WinError 5`` or 32,
+    even though each writer uses its own temporary file.  A short sidecar lock
+    serialises record replacement; the retry also tolerates antivirus/indexer
+    handles that outlive the previous replacement for a few milliseconds.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    lock = path.with_name(f".{path.name}.write.lock")
+    deadline = time.monotonic() + 5.0
+    descriptor: int | None = None
+    while descriptor is None:
+        try:
+            descriptor = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            # A terminated process should not leave the registry unavailable.
+            try:
+                if time.time() - lock.stat().st_mtime > 30:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out waiting to update local job record: {path}")
+            time.sleep(0.025)
+    try:
+        os.close(descriptor)
+        last_error: PermissionError | None = None
+        for attempt in range(8):
+            temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                os.replace(temporary, path)
+                return
+            except PermissionError as error:
+                last_error = error
+                time.sleep(0.025 * (attempt + 1))
+            finally:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        raise last_error or PermissionError(f"cannot update local job record: {path}")
+    finally:
+        try:
+            lock.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def job_dir(job_file: Path) -> Path:
