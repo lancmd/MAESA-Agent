@@ -72,4 +72,4 @@ if (-not (Test-Path -LiteralPath $plusProfile)) {
 }
 
 & $venvPython (Join-Path $PSScriptRoot "verify_agent_install.py") --skill-root $skillRoot
-Write-Output "Setup complete. Set local software paths or environment variables if needed, then start: .\scripts\start_agent_mcp.ps1"
+Write-Output "Setup complete. Run .\scripts\maesa_doctor.ps1 to inspect software and data readiness, then start: .\scripts\start_agent_mcp.ps1"

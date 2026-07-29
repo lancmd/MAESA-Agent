@@ -86,7 +86,10 @@ with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
     assert command[command.index("--classification-raster") + 1].endswith("LULC_2000.tif"), command
     assert command[command.index("--samples-crs") + 1] == "EPSG:32650", command
     assert command.count("--samples-crs") == 1, command
-    assert "--require-training-only" in stages["roi_quality_2000"]["command"]
+    preflight = stages["classification_input_preflight_2000"]
+    assert "--require-training-only" in preflight["command"]
+    assert "--validation-samples" in preflight["command"]
+    assert "--require-raster-sampling" in preflight["command"]
     assert any(path.endswith("roi_2000.gpkg") for path in stages["spatial_preflight"]["inputs"])
     assert any(path.endswith("roi_2005.gpkg") for path in stages["spatial_preflight"]["inputs"])
     assert stages["lulc_accuracy_2000"]["outputs"][0].endswith("lulc_accuracy_2000.json")

@@ -19,13 +19,16 @@ REQUIRED_FILES = (
     "interfaces/backend_registry.example.json",
     "config/local_paths.example.json",
     "scripts/start_agent_mcp.ps1",
+    "scripts/maesa_doctor.ps1",
     "scripts/project_workflow.py",
     "scripts/analysis_validation.py",
     "scripts/classification_backend.py",
     "scripts/classification_profiles.py",
     "scripts/roi_quality.py",
+    "scripts/classification_input_preflight.py",
     "scripts/carbon_density_contract.py",
     "scripts/invest_datastack_builder.py",
+    "scripts/invest_parameter_report.py",
     "schemas/maesa_project_creation_plan.schema.json",
 )
 REQUIRED_BACKENDS = {"envi", "plus", "arcgis", "invest", "pytorch", "classification", "project", "ecosystem"}

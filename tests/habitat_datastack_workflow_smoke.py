@@ -64,12 +64,16 @@ with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
         "invest_carbon_2000", "invest_carbon_2005", "invest_habitat_quality_2000_datastack_builder",
         "invest_habitat_quality_2005_datastack_builder", "invest_habitat_quality_2000_input_contract",
         "invest_habitat_quality_2005_input_contract", "invest_habitat_quality_2000", "invest_habitat_quality_2005",
+        "invest_carbon_2000_parameter_report", "invest_carbon_2005_parameter_report",
+        "invest_habitat_quality_2000_parameter_report", "invest_habitat_quality_2005_parameter_report",
         "invest_multiperiod_summary",
     }
     assert expected.issubset(stages), sorted(stages)
     builder = stages["invest_habitat_quality_2000_datastack_builder"]
     assert "--lulc" in builder["command"] and any("LULC_2000.tif" in item for item in builder["command"])
     assert stages["invest_habitat_quality_2000"]["outputs"][0].endswith("quality_c.tif")
+    assert stages["invest_habitat_quality_2000"]["depends_on"] == ["invest_habitat_quality_2000_parameter_report"]
+    assert stages["invest_carbon_2000_parameter_report"]["outputs"][0].endswith("parameter_report.md")
     summary = stages["invest_multiperiod_summary"]["command"]
     assert any("carbon_storage_t_c" in item for item in summary) and any("habitat_quality" in item for item in summary)
 

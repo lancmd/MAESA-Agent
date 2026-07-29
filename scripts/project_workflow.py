@@ -425,23 +425,30 @@ def lulc_accuracy_stage(stages: list[dict[str, Any]], identifier: str, lulc: str
     return identifier
 
 
-def roi_quality_stage(stages: list[dict[str, Any]], identifier: str, roi: str,
-                      quality: dict[str, Any], workspace: Path, base: Path,
-                      dependencies: list[str], year: int, multi: bool,
-                      require_training_only: bool = False) -> str:
-    """Check one dated supervised ROI before handing it to ENVI.
+def classification_input_preflight_stage(stages: list[dict[str, Any]], identifier: str, roi: str | None,
+                                         quality: dict[str, Any], accuracy: dict[str, Any] | None,
+                                         workspace: Path, base: Path, dependencies: list[str],
+                                         year: int, multi: bool, require_training_only: bool = False,
+                                         require_raster_sampling: bool = False) -> str:
+    """Inspect dated training and validation inputs before a classifier opens.
 
-    This deliberately records sample coverage and possible train/validation
-    overlap without claiming that a healthy ROI count is classification
-    accuracy.  XML, GeoJSON, CSV and local vector readers are handled by the
-    shared checker; a period can override the global class/role fields.
+    ENVI receives a checked ROI; PyTorch has no ROI dependency but uses the
+    same stage when independent accuracy evidence has been configured.  The
+    report is intentionally a separate workflow output, so a failed sample
+    contract blocks the backend instead of appearing after it has run.
     """
-    output = dated_artifact_output(quality.get("output"), "outputs/validation/roi_quality.json", year, workspace, multi)
-    command = [sys.executable, str(ROOT / "scripts" / "roi_quality.py"), "--roi", source_path(roi, base),
+    output = dated_artifact_output(quality.get("preflight_output", quality.get("output")),
+                                   "outputs/validation/classification_input_preflight.json", year, workspace, multi)
+    command = [sys.executable, str(ROOT / "scripts" / "classification_input_preflight.py"),
                "--class-field", str(quality.get("class_field", "class_id")),
                "--minimum-rois-per-class", str(quality.get("minimum_rois_per_class", 30)),
                "--max-class-imbalance-ratio", str(quality.get("max_class_imbalance_ratio", 10.0)),
                "--output", output]
+    inputs: list[str] = []
+    if roi:
+        roi_path = source_path(roi, base)
+        command.extend(["--roi", roi_path])
+        inputs.append(roi_path)
     if quality.get("role_field"):
         command.extend(["--role-field", str(quality["role_field"])])
         command.extend(["--training-value", str(quality.get("training_value", "training"))])
@@ -454,8 +461,23 @@ def roi_quality_stage(stages: list[dict[str, Any]], identifier: str, roi: str,
     if isinstance(expected, list):
         for value in expected:
             command.extend(["--expected-class", str(value)])
+    if accuracy and accuracy.get("enabled"):
+        samples = source_path(str(accuracy["validation_samples"]), base)
+        command.extend(["--validation-samples", samples, "--reference-field", str(accuracy["reference_field"]),
+                        "--prediction-field", str(accuracy["prediction_field"]),
+                        "--minimum-validation-samples-per-class",
+                        str(accuracy.get("minimum_samples_per_class", 1))])
+        inputs.append(samples)
+        if accuracy.get("x_field"):
+            command.extend(["--x-field", str(accuracy["x_field"])])
+        if accuracy.get("y_field"):
+            command.extend(["--y-field", str(accuracy["y_field"])])
+        if accuracy.get("samples_crs"):
+            command.extend(["--samples-crs", str(accuracy["samples_crs"])])
+    if require_raster_sampling:
+        command.append("--require-raster-sampling")
     stages.append({"id": identifier, "adapter": "command", "enabled": True, "command": command,
-                   "inputs": [source_path(roi, base)], "outputs": [output], "depends_on": dependencies.copy()})
+                   "inputs": inputs, "outputs": [output], "depends_on": dependencies.copy()})
     return identifier
 
 
@@ -553,6 +575,26 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                 suffix = f"_{year}" if multi else ""
                 period_accuracy = imagery_period_accuracy(period, year)
                 strict_accuracy = task_type == "classification_invest" and bool(period_accuracy.get("enabled"))
+                quality_config: dict[str, Any] = {}
+                global_quality = classification.get("roi_quality")
+                period_quality = period.get("roi_quality")
+                if isinstance(global_quality, dict):
+                    quality_config.update(global_quality)
+                if isinstance(period_quality, dict):
+                    quality_config.update(period_quality)
+                input_dependencies = dependencies.copy()
+                # A dated accuracy table is inspected before either backend
+                # executes.  ENVI also needs its local supervised ROI; the
+                # PyTorch branch uses only the validation part of this check.
+                needs_preflight = (engine == "envi" and quality_config.get("enabled", True) is not False) or bool(period_accuracy.get("enabled"))
+                if needs_preflight:
+                    dated_roi = imagery_period_training_roi(period) or inputs.get("training_roi") if engine == "envi" else None
+                    preflight_id = classification_input_preflight_stage(
+                        stages, f"classification_input_preflight_{year}", dated_roi, quality_config, period_accuracy,
+                        workspace, base, dependencies.copy(), year, multi,
+                        require_training_only=strict_accuracy, require_raster_sampling=strict_accuracy,
+                    )
+                    input_dependencies = [preflight_id]
                 if engine == "pytorch":
                     confidence = templated_output(classification.get("output_confidence"), "outputs/lulc_confidence.tif", year, workspace, multi)
                     low_confidence = (templated_output(classification.get("output_low_confidence"), "outputs/lulc_low_confidence.tif", year, workspace, multi)
@@ -579,7 +621,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                     stages.append({"id": stage_id, "adapter": "command", "enabled": True, "command": command,
                                    "inputs": [source_path(inputs["model_package"], base), image],
                                    "outputs": [item for item in [lulc_output, confidence, low_confidence] if item],
-                                   "depends_on": dependencies.copy()})
+                                   "depends_on": input_dependencies})
                 else:
                     resolved_profile = imagery_period_sensor_profile(period, classification)
                     method = resolved_profile["classification_method"]["method"]
@@ -587,19 +629,6 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                     stage_id = f"classification_envi{suffix}"
                     dated_roi = imagery_period_training_roi(period) or inputs.get("training_roi")
                     roi_path = source_path(dated_roi, base)
-                    quality_config: dict[str, Any] = {}
-                    global_quality = classification.get("roi_quality")
-                    period_quality = period.get("roi_quality")
-                    if isinstance(global_quality, dict):
-                        quality_config.update(global_quality)
-                    if isinstance(period_quality, dict):
-                        quality_config.update(period_quality)
-                    quality_dependencies = dependencies.copy()
-                    if quality_config.get("enabled", True) is not False or strict_accuracy:
-                        quality_id = roi_quality_stage(stages, f"roi_quality_{year}", dated_roi, quality_config,
-                                                       workspace, base, dependencies.copy(), year, multi,
-                                                       require_training_only=strict_accuracy)
-                        quality_dependencies = [quality_id]
                     stages.append({"id": stage_id, "adapter": "envi", "enabled": True,
                                    "batch_file": str(ROOT / "scripts" / ("envi_maximum_likelihood.pro" if method == "maximum_likelihood" else "envi_minimum_distance.pro")),
                                    "entrypoint": "mining_envi_maximum_likelihood" if method == "maximum_likelihood" else "mining_envi_minimum_distance",
@@ -609,7 +638,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                                    "classification_profile": resolved_profile,
                                    "classification_profile_path": profile_path,
                                    "inputs": [image, roi_path, profile_path], "outputs": [lulc_output],
-                                   "depends_on": quality_dependencies})
+                                   "depends_on": input_dependencies})
                 validation_id = lulc_validation_stage(stages, f"lulc_output_validation{suffix}", lulc_output, image,
                                                       scheme, carbon, workspace, [stage_id])
                 if period_accuracy.get("enabled"):
@@ -904,6 +933,14 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                                                "--datastack", datastack, "--output", contract], "inputs": [datastack],
                                    "outputs": [contract], "depends_on": model_dependencies})
                     model_dependencies = [contract_id]
+                parameter_report = str(workspace / "validation" / f"{stage_id}_parameter_report.md")
+                parameter_report_id = f"{stage_id}_parameter_report"
+                stages.append({"id": parameter_report_id, "adapter": "command", "enabled": True,
+                               "command": [sys.executable, str(ROOT / "scripts" / "invest_parameter_report.py"),
+                                           "--model", model, "--datastack", datastack, "--output", parameter_report],
+                               "inputs": [datastack, source_lulc] + ([carbon] if model == "carbon" and carbon else []),
+                               "outputs": [parameter_report], "depends_on": model_dependencies})
+                model_dependencies = [parameter_report_id]
                 stages.append({"id": stage_id, "adapter": "invest", "enabled": True, "model": INVEST_MODELS[model]["cli"],
                                "datastack": datastack, "model_workspace": str(model_workspace),
                                "inputs": [datastack, source_lulc] + ([carbon] if carbon else []),

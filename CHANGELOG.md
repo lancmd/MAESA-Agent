@@ -2,6 +2,13 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.4.1 - 2026-07-29
+
+- Split the README into Skill installation and local development/run paths. Added `maesa_doctor.ps1` for one local dependency, software, GPU and project-data diagnostic, plus an occupied-port guard before MCP starts.
+- Added a copyable six-period real-project template. Its data folders are empty by design and its project file is clearly marked as an example.
+- Added a classifier input preflight stage. It checks supervised ROI field/category/geometry/CRS conditions and reports per-class independent validation sample counts before ENVI or configured PyTorch accuracy evaluation starts.
+- Added an InVEST parameter report stage for every dated and scenario datastack. Carbon reports density codes and pools in Mg C/ha; Habitat Quality reports its half-saturation constant and threat parameters.
+
 ## 0.4.0 - 2026-07-29
 
 - Replaced the scattered ArcGIS, ENVI, PLUS, InVEST, data-source and Copilot guides with seven task-centred documents under `docs/`.

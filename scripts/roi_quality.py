@@ -247,8 +247,6 @@ def inspect(path: Path, class_field: str, *, role_field: str | None = None,
         errors.append(f"{missing_class} ROI features have an empty {class_field} value")
     if not by_class:
         errors.append("ROI input contains no labelled sample features")
-    if not crs:
-        warnings.append("ROI CRS is not declared; verify that the layer will be transformed to the imagery CRS")
     counts = {label: len(items) for label, items in sorted(by_class.items())}
     underrepresented = sorted(label for label, count in counts.items() if count < minimum_rois_per_class)
     if underrepresented:
@@ -257,6 +255,33 @@ def inspect(path: Path, class_field: str, *, role_field: str | None = None,
     missing_expected = sorted(required - set(counts))
     if missing_expected:
         errors.append("expected classes absent from ROI input: " + ", ".join(missing_expected))
+    declared_fields = {str(key) for feature in features
+                       for key in (feature.get("properties") or {}).keys()}
+    if class_field not in declared_fields:
+        errors.append(f"ROI class field is missing: {class_field}")
+    if len(counts) < 2:
+        errors.append("ROI input needs at least two labelled classes")
+    vector_reader = reader in {"geojson", "fiona", "arcgis_propy"}
+    if vector_reader and not crs:
+        errors.append("ROI CRS is not declared")
+    elif not crs:
+        warnings.append("ROI CRS is not declared; verify that the layer will be transformed to the imagery CRS")
+    if vector_reader:
+        geometries = [_json_geometry(item.get("geometry")) for item in features]
+        missing_geometry = sum(item is None for item in geometries)
+        if missing_geometry:
+            errors.append(f"{missing_geometry} ROI features have no valid geometry")
+        else:
+            try:
+                from shapely.geometry import shape  # type: ignore
+                invalid_geometry = sum(not shape(item).is_valid for item in geometries if item)
+            except ImportError:
+                warnings.append("Shapely is unavailable; ROI geometry validity was not checked")
+            except (TypeError, ValueError):
+                errors.append("ROI contains a geometry that cannot be read")
+            else:
+                if invalid_geometry:
+                    errors.append(f"{invalid_geometry} ROI geometries are invalid")
     if counts:
         smallest, largest = min(counts.values()), max(counts.values())
         if smallest and largest / smallest > max_class_imbalance_ratio:

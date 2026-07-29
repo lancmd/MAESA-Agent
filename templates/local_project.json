@@ -70,7 +70,7 @@
       "minimum_rois_per_class": 30,
       "max_class_imbalance_ratio": 10.0,
       "sample_count_field": null,
-      "output": "outputs/validation/roi_quality_{year}.json"
+      "preflight_output": "outputs/validation/classification_input_preflight_{year}.json"
     },
     "accuracy": {
       "enabled": false,
@@ -80,6 +80,7 @@
       "x_field": null,
       "y_field": null,
       "samples_crs": null,
+      "minimum_samples_per_class": 1,
       "output": "validation/lulc_accuracy.json",
       "confusion_matrix": "validation/confusion_matrix.csv"
     }
