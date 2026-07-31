@@ -105,4 +105,4 @@ if ($projectExists) {
 }
 
 Write-Output ""
-Write-Output "Run .\scripts\project_validator.py --project <project.json> before analysis."
+Write-Output "Run .\scripts\project_readiness.py --project <project.json> before analysis."

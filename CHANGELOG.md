@@ -2,6 +2,12 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.4.2 - 2026-07-30
+
+- Added `project_readiness.py` and the local MCP `inspect_local_project_readiness` tool. They compile a project without opening commercial GIS software, inspect real spatial inputs, check dated ROI and independent validation tables, inventory input hashes, list planned stages and identify unavailable local software.
+- Documented the readiness report in the install/run path and made `maesa_doctor.ps1` point users to it before analysis.
+- Added a real tiny-raster readiness regression and wheel-asset assertion so the pre-run inspection remains available in the standalone MCP package.
+
 ## 0.4.1 - 2026-07-29
 
 - Split the README into Skill installation and local development/run paths. Added `maesa_doctor.ps1` for one local dependency, software, GPU and project-data diagnostic, plus an occupied-port guard before MCP starts.

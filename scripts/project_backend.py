@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from project_validator import validate  # noqa: E402
 from project_builder import build as build_project  # noqa: E402
+from project_readiness import inspect_project as inspect_project_readiness  # noqa: E402
 from project_workflow import compile_workflow  # noqa: E402
 from analysis_validation import validate_results  # noqa: E402
 from lulc_accuracy import evaluate as evaluate_lulc  # noqa: E402
@@ -24,7 +25,7 @@ def main() -> int:
     envelope = json.load(sys.stdin)
     if envelope.get("operation") == "system.capabilities":
         result = {"status": "completed", "result": {"backend": "project", "mode": "local-command", "operations": [
-            "system.capabilities", "project.build_from_inputs", "project.validate", "project.compile_workflow", "project.run_workflow",
+            "system.capabilities", "project.build_from_inputs", "project.validate", "project.inspect_readiness", "project.compile_workflow", "project.run_workflow",
             "project.prepare_plus_scenarios", "project.submit_workflow", "system.job_status", "system.cancel_job", "system.list_outputs",
             "analysis.validate_results", "analysis.lulc_accuracy", "analysis.plus_validation", "analysis.invest_consistency",
         ]}}
@@ -73,6 +74,11 @@ def main() -> int:
         report = validate(Path(envelope["parameters"]["project_file"]).expanduser().resolve())
         result = {"status": "completed" if report["status"] == "valid" else "failed", "result": report,
                   "error": None if report["status"] == "valid" else "; ".join(report["errors"])}
+    elif envelope.get("operation") == "project.inspect_readiness":
+        params = envelope["parameters"]
+        output = params.get("output_report")
+        report = inspect_project_readiness(Path(params["project_file"]), Path(output) if output else None)
+        result = {"status": report["status"], "result": report, "outputs": [report["output"]]}
     elif envelope.get("operation") == "project.compile_workflow":
         params = envelope["parameters"]
         output = params.get("output_job")

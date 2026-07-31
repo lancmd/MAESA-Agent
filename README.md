@@ -63,10 +63,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\maesa_doctor.ps1
 
 ```powershell
 python .\scripts\project_validator.py --project .\project.json
+python .\scripts\project_readiness.py --project .\project.json
 python .\scripts\project_workflow.py --project .\project.json --run
 ```
 
 工作流会生成 `workspace/generated/workflow_job.json`，无需手写 job 文件。
+
+`project_readiness.py` 不会启动 ENVI、PLUS、InVEST 或 ArcGIS Pro。它会生成
+`workspace/validation/project_readiness.json`，列出输入文件哈希、实际栅格/矢量预检、每期 ROI 与独立验证样本检查、所需软件、计划阶段和输出位置。状态为 `prepared` 时，项目数据契约已通过，但本机还缺少所需软件；`pending_validation` 表示可以计算，但分类精度仍缺独立样本证据。
 
 ## 首次数据交接
 
@@ -123,4 +127,4 @@ MAESA-Agent/
 └── tests/        # 可移植与本地集成测试
 ```
 
-MAESA-Agent 0.4.1 使用 [MIT License](LICENSE)。它编排已经安装的软件，不分发 ArcGIS Pro、ENVI、PLUS 或 InVEST 的许可，也不替代独立的数据和科研验证。
+MAESA-Agent 0.4.2 使用 [MIT License](LICENSE)。它编排已经安装的软件，不分发 ArcGIS Pro、ENVI、PLUS 或 InVEST 的许可，也不替代独立的数据和科研验证。

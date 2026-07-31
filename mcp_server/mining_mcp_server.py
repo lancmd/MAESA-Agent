@@ -284,6 +284,15 @@ def validate_local_project(project_file: str, backend: str = "project") -> str:
 
 
 @mcp.tool()
+def inspect_local_project_readiness(project_file: str, output_report: str | None = None,
+                                    backend: str = "project") -> str:
+    """Compile a non-destructive readiness report with input hashes, spatial checks, ROI evidence, software gaps and planned stages."""
+    return json_result(registry.call(backend, "project.inspect_readiness", {
+        "project_file": project_file, "output_report": output_report,
+    }))
+
+
+@mcp.tool()
 def build_local_project_from_inputs(output_project: str, project_id: str, workspace: str,
                                     task_type: str = "full_chain", imagery_periods: list[dict[str, Any]] | None = None,
                                     historical_lulc_periods: list[dict[str, Any]] | None = None,

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
     "native_resnet50_patch_smoke.py", "pytorch_template_contract_smoke.py", "registered_resnet50_real_inference.py", "local_full_chain_regression.py", "real_six_period_classification_invest.py",
     "envi_backend_smoke.py",
     "classification_support_smoke.py", "classification_input_preflight_smoke.py", "lulc_accuracy_smoke.py", "lulc_accuracy_raster_contract_smoke.py",
-    "maesa_copilot_smoke.py", "project_backend_validation_smoke.py", "workflow_pending_validation_smoke.py",
+    "maesa_copilot_smoke.py", "project_backend_validation_smoke.py", "project_readiness_smoke.py", "workflow_pending_validation_smoke.py",
     "project_task_modes_smoke.py", "stage_output_mapping_smoke.py",
     "plus_output_contract_smoke.py", "plus_v142_profile_smoke.py", "plus_bridge_state_isolation_smoke.py", "plus_chain_compile_smoke.py",
     "prepare_plus_scenarios_smoke.py",

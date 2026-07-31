@@ -28,7 +28,7 @@ async def run() -> None:
             tools = await session.list_tools()
             names = {tool.name for tool in tools.tools}
             expected = {
-                "list_backends", "backend_capabilities", "inspect_dataset", "validate_local_project",
+                "list_backends", "backend_capabilities", "inspect_dataset", "validate_local_project", "inspect_local_project_readiness",
                 "compile_project_workflow", "run_local_project", "validate_analysis_results",
                 "evaluate_lulc_accuracy", "validate_plus_backcast",
                 "validate_invest_consistency",

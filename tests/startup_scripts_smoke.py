@@ -18,6 +18,7 @@ process = subprocess.run(["powershell", "-ExecutionPolicy", "Bypass", "-File", s
 assert process.returncode == 0, process.stdout
 for label in ("MAESA-Agent Doctor", "Python 3.11+", "MCP package", "Software:", "GPU:", "Data:", "LULC input"):
     assert label in process.stdout, process.stdout
+assert "project_readiness.py" in process.stdout, process.stdout
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
     listener.bind(("127.0.0.1", 0)); listener.listen(1)

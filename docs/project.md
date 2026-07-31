@@ -19,6 +19,16 @@
 
 输出清单、参数、软件版本、输入哈希、随机种子和验证状态分别写入 `outputs_manifest.json`、`provenance.json` 与 `validation_summary.json`。
 
+## 开跑前就绪检查
+
+在启动 ENVI、PLUS、InVEST 或 ArcGIS Pro 前执行：
+
+```powershell
+python .\scripts\project_readiness.py --project .\project.json
+```
+
+它会生成 `workspace/validation/project_readiness.json`。报告包含真实输入文件的大小和 SHA-256、空间预检、逐期 ROI/独立验证样本检查、工作流阶段、计划输出及本机软件探测。`completed` 表示可以启动；`prepared` 表示数据已检查但缺少本机软件；`pending_validation` 表示可运行但分类精度尚缺独立验证；`failed` 表示应先修复报告中的输入或契约错误。
+
 ## Copilot 的受控创建
 
 1. 建立本地输入清单；
