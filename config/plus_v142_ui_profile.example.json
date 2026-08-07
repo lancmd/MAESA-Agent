@@ -5,7 +5,7 @@
   "startup_wait_seconds": 2,
   "window": {
     "backend": "uia",
-    "title_re": ".*(PLUS|Patch-generating Land Use Simulation).*",
+    "title_re": "^Patch-generating Land Use Simulation \\(PLUS\\) Model V1\\.4\\.1$",
     "timeout_seconds": 20
   },
   "steps": [],
@@ -36,7 +36,7 @@
   "notes": [
     "Copy this file to config/plus_v142_ui_profile.json. The runtime creates a local calibration report with control titles, AutomationId values and a window screenshot.",
     "For every actual action provide target.uia first. target.image is a local PNG fallback relative to this profile; it is matched only after the UI Automation selector fails.",
-    "Supported actions: click, set_text, select, menu, hotkey, wait and capture. Values may reference ${scenario}, ${workspace}, ${expected_output}, ${historical_lulc_0}, ${driver_dem}, ${plus_random_seed} and RE fields such as ${re_core_driver_input}.",
+    "Supported actions: click, click_if_present, set_text, select, select_directory, select_files, menu, hotkey, screen_type, screen_type_absolute, cars_window_type, wait and capture. cars_window_type targets the CARS thread spinner in calibrated screen coordinates; the local six-class profile sets it to 6 before Run. Values may reference ${scenario}, ${workspace}, ${expected_output}, ${historical_lulc_0}, ${driver_dem}, ${leas_driver_folder}, ${leas_expansion_input}, ${plus_random_seed} and RE fields such as ${re_core_driver_input}.",
     "Set calibrated to true only after checking the profile against the local HPSCIL PLUS snapshot window. Its repository file name is V1.4.2 while the observed window title is V1.4.1; the profile must use the observed controls, not infer a version from either label. Use unique step ids so an interrupted run can attach to the existing GUI and continue safely."
   ]
 }

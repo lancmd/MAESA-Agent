@@ -236,6 +236,20 @@ def request_context(envelope: dict[str, Any], scenario: str, workspace: Path, ex
     drivers = detail.get("driver_factors", {}) if isinstance(detail.get("driver_factors"), dict) else {}
     context: dict[str, Any] = {"scenario": scenario, "workspace": str(workspace), "expected_output": str(expected),
                                "historical_lulc_count": len(history)}
+    # LEAS receives a directory rather than one driver path.  The compiler
+    # passes all aligned driver paths in ``driver_factors``; derive the common
+    # parent so the GUI and the generated LEAS parameter file use the same
+    # contract.  An explicit value in plus_settings wins for projects that
+    # keep a curated feature stack separate from other drivers.
+    driver_paths = [Path(value) for value in drivers.values() if isinstance(value, str) and value]
+    if driver_paths:
+        parents = {str(path.expanduser().resolve().parent) for path in driver_paths}
+        if len(parents) == 1:
+            context["leas_driver_folder"] = next(iter(parents))
+        else:
+            context["leas_driver_folder"] = str(driver_paths[0].expanduser().resolve().parent)
+    else:
+        context["leas_driver_folder"] = ""
     for index, item in enumerate(history):
         context[f"historical_lulc_{index}"] = item
     for key, value in drivers.items():
@@ -245,10 +259,38 @@ def request_context(envelope: dict[str, Any], scenario: str, workspace: Path, ex
     for key, value in settings.items():
         if isinstance(value, (str, int, float)) or value is None:
             context[f"plus_{key}"] = "" if value is None else value
+    explicit_feature_folder = settings.get("leas_driver_folder")
+    if isinstance(explicit_feature_folder, str) and explicit_feature_folder:
+        context["leas_driver_folder"] = explicit_feature_folder
+    explicit_expansion = settings.get("leas_expansion_input")
+    if isinstance(explicit_expansion, str) and explicit_expansion:
+        context["leas_expansion_input"] = explicit_expansion
+    elif len(history) >= 2:
+        # Keep the fallback deterministic for older project requests.  The
+        # workflow compiler normally writes this raster before creating the
+        # request, so this path is also a useful contract diagnostic.
+        context["leas_expansion_input"] = str(workspace.parent.parent / "intermediate" / "plus_inputs" /
+                                              f"land_expansion_{settings.get('baseline_year', 2025)}_{settings.get('target_year', 2026)}.tif")
+    else:
+        context["leas_expansion_input"] = ""
+    # Land demand is passed as a per-scenario class mapping by the project
+    # compiler.  Flatten it into explicit placeholders so one calibrated GUI
+    # profile can be reused for ND/UD/EP/RE without editing screen coordinates
+    # or hard-coding the same demand vector into every scenario.
+    land_demand = settings.get("land_demand")
+    if isinstance(land_demand, dict):
+        for class_code, value in land_demand.items():
+            if isinstance(value, (str, int, float)):
+                context[f"plus_demand_{class_code}"] = value
     resource = detail.get("resource_extraction", {}) if isinstance(detail.get("resource_extraction"), dict) else {}
     for key, value in resource.items():
         if isinstance(value, (str, int, float)) or value is None:
             context[f"re_{key}"] = "" if value is None else value
+    core_input = resource.get("core_driver_input")
+    if isinstance(core_input, str) and core_input:
+        core_path = Path(core_input)
+        zone_candidate = core_path.with_name("subsidence_zone_plus_uint8.tif")
+        context["re_plus_zone_input"] = str(zone_candidate if zone_candidate.is_file() else core_path)
     return context
 
 
@@ -331,13 +373,31 @@ def load_profile(path: Path | None) -> tuple[dict[str, Any], str | None]:
     return payload, sha256(path)
 
 
-def scenario_steps(profile: dict[str, Any], scenario: str) -> list[dict[str, Any]]:
+def scenario_steps(profile: dict[str, Any], scenario: str, *, phase: str | None = None) -> list[dict[str, Any]]:
     base = profile.get("steps", [])
     overrides = profile.get("scenario_steps", {})
     extra = overrides.get(scenario, []) if isinstance(overrides, dict) else []
     if not isinstance(base, list) or not isinstance(extra, list):
         raise ValueError("official HPSCIL PLUS GUI profile steps must be lists")
-    steps = [item for item in [*base, *extra] if isinstance(item, dict)]
+    base_items = [item for item in base if isinstance(item, dict)]
+    extra_items = [item for item in extra if isinstance(item, dict)]
+    # Scenario-specific controls (notably the RE development-zone mask) must
+    # be applied before the shared CARS Run button.  Keeping the insertion
+    # point in the profile avoids a second, duplicated GUI workflow.
+    if phase == "cars_only":
+        # A completed LEAS run can be resumed after the elevated worker or
+        # vendor GUI exits.  CARS consumes the six contracted probability
+        # bands, so replaying LEAS would overwrite valid bands or repeat an
+        # expensive prediction.
+        base_items = [item for item in base_items
+                      if str(item.get("id", "")).startswith("cars_")
+                      or str(item.get("id", "")) in {"close_leas", "open_plus_menu_cars", "open_cars"}]
+    if extra_items:
+        run_index = next((index for index, item in enumerate(base_items)
+                          if str(item.get("id", "")) == "cars_run"), len(base_items))
+        steps = [*base_items[:run_index], *extra_items, *base_items[run_index:]]
+    else:
+        steps = base_items
     identifiers = [str(item.get("id", "")).strip() for item in steps]
     if not steps or not all(identifiers) or len(set(identifiers)) != len(identifiers):
         return []
@@ -362,13 +422,64 @@ class PlusGui:
         self.process_id = process_id
         self.window = self.desktop.window(**criteria)
         self.window.wait("exists visible ready", timeout=float(window_spec.get("timeout_seconds", 20)))
+        # The PLUS snapshot remembers the last monitor position.  In this
+        # workstation that position can be on a disconnected display, which
+        # leaves the Qt menu/dialog technically visible but unreachable by
+        # screen automation.  Bring an off-screen main window back onto the
+        # primary desktop before replaying the calibrated sequence.
+        try:
+            rectangle = self.window.rectangle()
+            if rectangle.right <= 0 or rectangle.bottom <= 0:
+                import ctypes
+                user32 = ctypes.windll.user32
+                user32.ShowWindow(int(self.window.handle), 9)  # SW_RESTORE
+                user32.SetWindowPos(int(self.window.handle), -1, 80, 80, 0, 0, 0x0001 | 0x0004)
+                time.sleep(0.4)
+        except Exception:
+            pass
         # Qt's screenshot fallback sees the on-screen composition.  Bring the
         # elevated PLUS window forward before collecting a template or clicking
         # a menu so an unrelated foreground app cannot hide the target.
         self.window.set_focus()
+        self.profile = profile
         self.profile_file = profile_file
         self.artifact_dir = artifact_dir
         self.backend = backend
+
+    def find_cars_window(self, timeout: float = 10.0):
+        """Find the top-level CARS dialog across UIA and Win32 backends.
+
+        The PLUS Qt child dialog is exposed as a Win32 top-level window on
+        some machines and as a UIA window on others.  Restricting the search
+        to the main UIA Desktop therefore makes a valid dialog look absent.
+        """
+        from pywinauto import Desktop  # type: ignore
+        deadline = time.time() + max(0.5, float(timeout))
+        backends = [self.desktop]
+        if self.backend.lower() != "win32":
+            try:
+                backends.append(Desktop(backend="win32"))
+            except Exception:
+                pass
+        while time.time() < deadline:
+            for desktop in backends:
+                try:
+                    candidates = list(desktop.windows(process=self.process_id))
+                except Exception:
+                    candidates = []
+                try:
+                    candidates += [item for item in desktop.windows()
+                                   if item not in candidates and item.window_text() == "CARS"]
+                except Exception:
+                    pass
+                for item in candidates:
+                    try:
+                        if item.window_text() == "CARS" and item.is_visible():
+                            return item
+                    except Exception:
+                        continue
+            time.sleep(0.25)
+        raise GuiAutomationError("CARS window did not become visible within the timeout")
 
     @staticmethod
     def _uia_criteria(target: dict[str, Any]) -> dict[str, Any]:
@@ -382,17 +493,93 @@ class PlusGui:
         criteria = self._uia_criteria(target)
         if not criteria:
             raise GuiAutomationError("profile action has no UI Automation selector")
+        def direct_match(candidate: Any):
+            """Find a Qt control whose UIA properties match exactly.
+
+            Some Qt5 builds expose dotted automation IDs but do not allow
+            pywinauto's ``child_window`` resolver to traverse them.  Walking
+            the visible tree is slower, but keeps UIA as the primary route
+            and also works for top-level LEAS/CARS dialogs.
+            """
+            for item in [candidate, *candidate.descendants()]:
+                try:
+                    if "auto_id" in criteria and item.automation_id() != criteria["auto_id"]:
+                        continue
+                    if "control_type" in criteria and item.element_info.control_type != criteria["control_type"]:
+                        continue
+                    if "title" in criteria and item.window_text() != criteria["title"]:
+                        continue
+                    if "title_re" in criteria and not re.search(criteria["title_re"], item.window_text()):
+                        continue
+                    if "class_name" in criteria and item.class_name() != criteria["class_name"]:
+                        continue
+                    # ``descendants`` already returns a wrapper.  Calling
+                    # wrapper_object() again can fail for Qt proxy edits
+                    # even though the control is present and usable.
+                    return item
+                except Exception:
+                    continue
+            return None
         try:
             return self.window.child_window(**criteria).wrapper_object()
         except Exception as first_error:
             # Qt popup menus and file dialogs can be sibling windows rather
             # than descendants of the main window.
-            for candidate in self.desktop.windows(process=self.process_id):
+            # Qt menu popups and modal dialogs are often exposed as top-level
+            # UIA windows without the parent process filter.  Search the
+            # process-scoped windows first, then visible desktop windows so a
+            # menu item such as PLUS -> CARS can be addressed reliably.
+            candidates = list(self.desktop.windows(process=self.process_id))
+            try:
+                candidates += [item for item in self.desktop.windows()
+                               if item not in candidates and item.is_visible()]
+            except Exception:
+                pass
+            for candidate in candidates:
                 try:
-                    return candidate.child_window(**criteria).wrapper_object()
+                    found = direct_match(candidate)
+                    if found is not None:
+                        return found
+                    try:
+                        return candidate.child_window(**criteria).wrapper_object()
+                    except Exception:
+                        if "auto_id" in criteria:
+                            return candidate.child_window(auto_id=criteria["auto_id"]).wrapper_object()
+                        raise
                 except Exception:
                     continue
+            try:
+                write_json(self.artifact_dir / "plus_control_debug.json", {
+                    "criteria": criteria,
+                    "windows": [candidate.window_text() for candidate in candidates],
+                    "matching_candidates": [
+                        {"window": candidate.window_text(), "controls": [
+                            {"title": item.window_text(), "auto_id": item.automation_id(),
+                             "control_type": item.element_info.control_type}
+                            for item in candidate.descendants()
+                            if (criteria.get("auto_id") is None or item.automation_id() == criteria.get("auto_id"))
+                               or (criteria.get("control_type") is None or item.element_info.control_type == criteria.get("control_type"))
+                        ]}
+                        for candidate in candidates if candidate.window_text() in {"LEAS", "Patch-generating Land Use Simulation (PLUS) Model V1.4.1"}
+                    ],
+                    "process_id": self.process_id,
+                })
+            except Exception:
+                pass
             raise first_error
+
+    @staticmethod
+    def click_screen(point: list[Any]) -> dict[str, Any]:
+        if len(point) != 2 or not all(isinstance(value, (int, float)) for value in point):
+            raise GuiAutomationError("screen point must contain two numeric coordinates")
+        try:
+            import ctypes
+            ctypes.windll.user32.SetCursorPos(int(point[0]), int(point[1]))
+            ctypes.windll.user32.mouse_event(2, 0, 0, 0, 0)
+            ctypes.windll.user32.mouse_event(4, 0, 0, 0, 0)
+            return {"route": "screen_point", "x": int(point[0]), "y": int(point[1])}
+        except Exception as error:
+            raise GuiAutomationError(f"screen click failed: {error}") from error
 
     def _image_target(self, target: dict[str, Any]) -> tuple[Path, float]:
         raw = target.get("image") if isinstance(target, dict) else None
@@ -429,28 +616,294 @@ class PlusGui:
         return point[0] + needle.shape[1] // 2, point[1] + needle.shape[0] // 2, float(score)
 
     def click(self, target: dict[str, Any]) -> dict[str, Any]:
+        window_point = target.get("window_point") if isinstance(target, dict) else None
+        if (isinstance(window_point, list) and len(window_point) == 2
+                and all(isinstance(value, (int, float)) for value in window_point)):
+            # Calibrated menu coordinates are recorded in PLUS window space,
+            # not desktop space.  This survives the window being moved or
+            # restored beneath another application between runs.
+            rectangle = self.window.rectangle()
+            return self.click_screen([
+                int(rectangle.left + window_point[0]),
+                int(rectangle.top + window_point[1]),
+            ])
+        screen_point = target.get("screen_point") if isinstance(target, dict) else None
+        if (isinstance(screen_point, list) and len(screen_point) == 2
+                and all(isinstance(value, (int, float)) for value in screen_point)):
+            # Screen coordinates are useful for Qt menu popups whose client
+            # origin is shifted by a title bar or Windows display scaling.
+            return self.click_screen(screen_point)
+        point = target.get("point") if isinstance(target, dict) else None
+        if (isinstance(point, list) and len(point) == 2 and
+                all(isinstance(value, (int, float)) for value in point)):
+            self.window.click_input(coords=(int(point[0]), int(point[1])))
+            return {"route": "calibrated_point", "x": int(point[0]), "y": int(point[1])}
         try:
             control = self._control(target)
-            control.click_input()
+            # QAction-backed Qt menu entries respond more reliably to the UIA
+            # Invoke pattern than to a synthesized mouse click.
+            if getattr(getattr(control, "element_info", None), "control_type", "") == "MenuItem" \
+                    and hasattr(control, "invoke"):
+                control.invoke()
+            elif getattr(getattr(control, "element_info", None), "control_type", "") == "SplitButton":
+                # Windows' file picker exposes its primary Open/Save action as
+                # a SplitButton.  The wrapper's default click lands on the
+                # arrow half and only opens the drop-down, leaving the modal
+                # dialog in front of the PLUS table.  Use the left/main
+                # segment explicitly so the selected filename is committed.
+                rectangle = control.rectangle()
+                x = max(8, min(35, max(1, rectangle.width() // 3)))
+                control.click_input(coords=(x, max(1, rectangle.height() // 2)))
+            else:
+                control.click_input()
             return {"route": "pywinauto", "control": control.window_text()}
         except Exception as selector_error:
             x, y, score = self._template_center(target)
             self.window.click_input(coords=(x, y))
             return {"route": "image", "x": x, "y": y, "score": score, "selector_error": str(selector_error)}
 
-    def set_text(self, target: dict[str, Any], value: str) -> dict[str, Any]:
+    def set_text(self, target: dict[str, Any], value: str, *, commit: bool = False) -> dict[str, Any]:
         try:
             control = self._control(target)
             control.set_focus()
-            if hasattr(control, "set_edit_text"):
-                control.set_edit_text(value)
-            else:
+            try:
+                if hasattr(control, "set_edit_text"):
+                    control.set_edit_text(value)
+                else:
+                    raise AttributeError("set_edit_text unavailable")
+            except Exception:
+                # Qt QLineEdit wrappers sometimes expose set_edit_text but
+                # reject it at runtime; keyboard replacement still works.
                 control.type_keys("^a{BACKSPACE}" + value, with_spaces=True, set_foreground=True)
-            return {"route": "pywinauto", "control": control.window_text()}
+            if commit:
+                # The PLUS Qt dialogs persist their parameter file from the
+                # edited widget's focus-out signal.  set_edit_text changes the
+                # visible text but, on some Qt builds, does not emit that
+                # signal.  A harmless Tab makes the value part of the LEAS
+                # request instead of leaving <Input Feature folder> blank.
+                try:
+                    control.type_keys("{TAB}", set_foreground=True)
+                except Exception:
+                    try:
+                        from pywinauto.keyboard import send_keys  # type: ignore
+                        send_keys("{TAB}")
+                    except Exception:
+                        pass
+            return {"route": "pywinauto", "control": control.window_text(), "committed": commit}
         except Exception as selector_error:
             self.click(target)
             self.window.type_keys("^a{BACKSPACE}" + value, with_spaces=True, set_foreground=True)
-            return {"route": "image", "selector_error": str(selector_error)}
+            if commit:
+                self.window.type_keys("{TAB}", set_foreground=True)
+            return {"route": "image", "selector_error": str(selector_error), "committed": commit}
+
+    def select_files_clean(self, target: dict[str, Any], directory: str) -> dict[str, Any]:
+        """Select all development-potential TIFFs without relying on Qt labels."""
+        folder = Path(directory).expanduser().resolve()
+        if is_unc(str(folder)) or not folder.is_dir():
+            raise GuiAutomationError(f"PLUS multi-file picker directory does not exist: {folder}")
+        self.click(target)
+        time.sleep(0.5)
+        try:
+            dialog = next(item for window in self.desktop.windows(process=self.process_id)
+                          for item in window.descendants()
+                          if item.window_text().startswith(("Pick", "Open", "鎵撳紑")))
+            edit = next(item for item in dialog.descendants()
+                        if item.automation_id() == "1148" and item.element_info.control_type == "Edit")
+            edit.set_edit_text(str(folder))
+            edit.set_focus()
+            from pywinauto.keyboard import send_keys  # type: ignore
+            send_keys("{ENTER}")
+            time.sleep(0.8)
+            list_view = next(item for item in dialog.descendants()
+                             if item.element_info.control_type in {"List", "Pane"}
+                             and (item.automation_id() == "listview" or item.class_name() in {"UIItemsView", "DUIListView"}))
+            rectangle = list_view.rectangle()
+            self.click_screen([rectangle.left + max(20, min(120, rectangle.width() // 2)),
+                               rectangle.top + max(20, min(120, rectangle.height() // 2))])
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.keybd_event(0x11, 0, 0, 0)
+            user32.keybd_event(0x41, 0, 0, 0)
+            user32.keybd_event(0x41, 0, 2, 0)
+            user32.keybd_event(0x11, 0, 2, 0)
+            time.sleep(0.3)
+            open_button = next(item for item in dialog.descendants()
+                               if item.automation_id() == "1" and item.element_info.control_type == "SplitButton")
+            rectangle = open_button.rectangle()
+            open_button.click_input(coords=(min(30, max(8, rectangle.width() // 3)),
+                                            max(1, rectangle.height() // 2)))
+        except Exception as error:
+            raise GuiAutomationError(f"PLUS multi-file picker failed: {error}") from error
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                if not any(item.window_text().startswith(("Pick", "Open", "鎵撳紑"))
+                           for window in self.desktop.windows(process=self.process_id)
+                           for item in window.descendants()):
+                    break
+            except Exception:
+                break
+            time.sleep(0.2)
+        selected = sorted(folder.glob("development_potential_band_*.tif"))
+        if len(selected) < 2:
+            raise GuiAutomationError(f"PLUS multi-file picker found fewer than two development-potential bands in {folder}")
+        try:
+            import rasterio  # type: ignore
+            invalid = []
+            for item in selected:
+                if item.stat().st_size <= 8:
+                    invalid.append(f"{item.name}:empty")
+                    continue
+                with rasterio.open(item) as raster:
+                    if raster.count != 1 or raster.width <= 0 or raster.height <= 0:
+                        invalid.append(f"{item.name}:invalid-grid")
+            if invalid:
+                raise GuiAutomationError("PLUS CARS received invalid LEAS bands: " + ", ".join(invalid))
+        except GuiAutomationError:
+            raise
+        except Exception as error:
+            raise GuiAutomationError(f"PLUS LEAS band validation failed: {error}") from error
+        return {"route": "pywinauto_file_dialog_multiselect", "directory": str(folder), "selected": len(selected)}
+
+    def select_files(self, target: dict[str, Any], directory: str) -> dict[str, Any]:
+        """Select all matching TIFFs in an isolated Windows file-picker folder.
+
+        CARS expects one development-potential row per class.  The native
+        picker accepts a multi-selection, but typing quoted absolute paths into
+        the filename box does not reliably commit them.  Navigate to the
+        folder, select its list items with Win32 Ctrl+A, then invoke the main
+        half of the Open split button.
+        """
+        folder = Path(directory).expanduser().resolve()
+        if is_unc(str(folder)) or not folder.is_dir():
+            raise GuiAutomationError(f"PLUS multi-file picker directory does not exist: {folder}")
+        self.click(target)
+        time.sleep(0.5)
+        try:
+            process_windows = list(self.desktop.windows(process=self.process_id))
+            dialog = next(item for window in process_windows for item in window.descendants()
+                          if item.window_text().startswith(("Pick", "Open", "打开")))
+        except StopIteration as error:
+            raise GuiAutomationError("PLUS file picker did not open") from error
+        try:
+            edit = next(item for item in dialog.descendants()
+                        if item.automation_id() == "1148" and item.element_info.control_type == "Edit")
+            edit.set_edit_text(str(folder))
+            edit.set_focus()
+            # Qt's directory picker labels the commit button "Select
+            # Folder" (or its localized equivalent); Enter only navigates
+            # the text box and leaves the dialog open.
+            buttons = [item for item in dialog.descendants()
+                       if item.element_info.control_type == "Button"]
+            accept = next((item for item in buttons
+                           if item.window_text().strip().lower() in
+                           {"select folder", "choose folder", "选择文件夹", "选择資料夾"}), None)
+            if accept is not None:
+                accept.click_input()
+            else:
+                from pywinauto.keyboard import send_keys  # type: ignore
+                send_keys("%s")
+        except Exception as error:
+            raise GuiAutomationError(f"PLUS file picker navigation failed: {error}") from error
+        time.sleep(0.8)
+        try:
+            list_view = next(item for item in dialog.descendants()
+                             if item.element_info.control_type in {"List", "Pane"}
+                             and (item.automation_id() == "listview" or item.class_name() in {"UIItemsView", "DUIListView"}))
+            rectangle = list_view.rectangle()
+            self.click_screen([rectangle.left + max(20, min(120, rectangle.width() // 2)),
+                               rectangle.top + max(20, min(120, rectangle.height() // 2))])
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.keybd_event(0x11, 0, 0, 0)  # Ctrl down
+            user32.keybd_event(0x41, 0, 0, 0)  # A down
+            user32.keybd_event(0x41, 0, 2, 0)  # A up
+            user32.keybd_event(0x11, 0, 2, 0)  # Ctrl up
+        except Exception as error:
+            raise GuiAutomationError(f"PLUS file list multi-selection failed: {error}") from error
+        time.sleep(0.3)
+        try:
+            open_button = next(item for item in dialog.descendants()
+                               if item.automation_id() == "1" and item.element_info.control_type == "SplitButton")
+            rectangle = open_button.rectangle()
+            open_button.click_input(coords=(min(30, max(8, rectangle.width() // 3)),
+                                            max(1, rectangle.height() // 2)))
+        except Exception as error:
+            raise GuiAutomationError(f"PLUS multi-file picker Open failed: {error}") from error
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                process_windows = list(self.desktop.windows(process=self.process_id))
+                if not any(item.window_text().startswith(("Pick", "Open", "打开"))
+                           for window in process_windows for item in window.descendants()):
+                    break
+            except Exception:
+                break
+            time.sleep(0.2)
+        selected = sorted(folder.glob("development_potential_band_*.tif"))
+        if len(selected) < 2:
+            raise GuiAutomationError(f"PLUS multi-file picker found fewer than two development-potential bands in {folder}")
+        return {"route": "pywinauto_file_dialog_multiselect", "directory": str(folder), "selected": len(selected)}
+
+    def select_directory(self, target: dict[str, Any], directory: str) -> dict[str, Any]:
+        """Use the vendor browse button to commit a directory value.
+
+        LEAS writes ``<Input Featrue folder>`` from the QFileDialog result;
+        editing the QLineEdit alone changes only the visible widget on some
+        Qt builds.  Navigating the native dialog and pressing Open triggers
+        the same signal as a human selection.
+        """
+        folder = Path(directory).expanduser().resolve()
+        if is_unc(str(folder)) or not folder.is_dir():
+            raise GuiAutomationError(f"PLUS LEAS feature directory does not exist: {folder}")
+        self.click(target)
+        time.sleep(0.5)
+        screen_error: Exception | None = None
+        try:
+            from pywinauto.keyboard import send_keys  # type: ignore
+            import win32clipboard  # type: ignore
+            self.click_screen([900, 585])
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardText(str(folder))
+            finally:
+                win32clipboard.CloseClipboard()
+            send_keys("^a^v")
+            self.click_screen([1160, 615])
+            time.sleep(0.8)
+            return {"route": "calibrated_screen_directory_dialog", "directory": str(folder)}
+        except Exception as error:
+            screen_error = error
+        try:
+            dialog = next(item for window in self.desktop.windows(process=self.process_id)
+                          for item in window.descendants()
+                          if item.window_text().startswith(("Pick", "Open", "choose", "选择", "鎵撳紑")))
+        except StopIteration as error:
+            detail = f"; screen fallback: {screen_error!r}" if screen_error else ""
+            raise GuiAutomationError("PLUS LEAS directory picker did not open" + detail) from error
+        try:
+            edit = next(item for item in dialog.descendants()
+                        if item.automation_id() == "1148" and item.element_info.control_type == "Edit")
+            edit.set_edit_text(str(folder))
+            edit.set_focus()
+            from pywinauto.keyboard import send_keys  # type: ignore
+            send_keys("{ENTER}")
+        except Exception as error:
+            detail = f"; screen fallback: {screen_error!r}" if screen_error else ""
+            raise GuiAutomationError(f"PLUS LEAS directory picker navigation failed: {error!r}{detail}") from error
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                if not any(item.window_text().startswith(("Pick", "Open", "choose", "选择", "鎵撳紑"))
+                           for window in self.desktop.windows(process=self.process_id)
+                           for item in window.descendants()):
+                    break
+            except Exception:
+                break
+            time.sleep(0.2)
+        return {"route": "pywinauto_file_dialog_directory", "directory": str(folder)}
 
     def select(self, target: dict[str, Any], value: str) -> dict[str, Any]:
         try:
@@ -466,11 +919,57 @@ class PlusGui:
     def menu(self, step: dict[str, Any]) -> dict[str, Any]:
         path = step.get("path")
         if isinstance(path, str) and path:
+            parts = [item.strip() for item in path.replace("->", ">>").split(">>") if item.strip()]
+            # The Qt QAction for CARS is not reliably exposed to UIA on the
+            # pinned build.  Use the calibrated two-click route directly:
+            # open PLUS, then click the CARS row in its submenu.  Coordinates
+            # are client-relative and therefore remain valid after the main
+            # window is restored from an off-screen monitor.
+            if parts and parts[-1].upper() == "CARS":
+                menu_points = self.profile.get("calibration_menu_points", {}) if isinstance(self.profile, dict) else {}
+                submenu_points = self.profile.get("calibration_submenu_points", {}) if isinstance(self.profile, dict) else {}
+                root_point = menu_points.get(parts[0]) if isinstance(menu_points, dict) else None
+                cars_point = submenu_points.get("CA based on Multiple Random Seeds (CARS)") if isinstance(submenu_points, dict) else None
+                if not (isinstance(root_point, list) and len(root_point) == 2
+                        and isinstance(cars_point, list) and len(cars_point) == 2):
+                    raise GuiAutomationError("PLUS GUI profile has no calibrated PLUS/CARS menu points")
+                self.window.set_focus()
+                # These calibration points were recorded in desktop space
+                # (the PLUS window is normally maximized), not client space.
+                self.click_screen(root_point)
+                time.sleep(0.4)
+                self.click_screen(cars_point)
+                self.find_cars_window(timeout=8.0)
+                return {"route": "calibrated_menu_points", "path": path,
+                        "root": root_point, "submenu": cars_point}
             try:
                 self.window.menu_select(path)
                 return {"route": "pywinauto_menu", "path": path}
             except Exception:
-                pass
+                # Some Qt5 builds do not expose QMenu actions to
+                # ``menu_select``.  Open the top-level menu through its
+                # calibrated screen point and use the visible action's
+                # mnemonic/first letter, which is stable for the English
+                # PLUS interface.
+                if parts:
+                    if len(parts) == 1:
+                        # Qt accepts the standard Alt+letter menu mnemonic
+                        # even when QMenu is not exposed to UIA.
+                        self.window.type_keys("%" + parts[0][0].lower(), set_foreground=True)
+                        return {"route": "keyboard_menu_root", "path": path}
+                    points = self.profile.get("calibration_menu_points", {}) if isinstance(self.profile, dict) else {}
+                    point = points.get(parts[0]) if isinstance(points, dict) else None
+                    if isinstance(point, list) and len(point) == 2:
+                        self.window.click_input(coords=(int(point[0]), int(point[1])))
+                    else:
+                        self.window.child_window(title=parts[0], control_type="MenuItem").click_input()
+                    time.sleep(0.3)
+                    if len(parts) > 1:
+                        self.window.type_keys(parts[-1][0], set_foreground=True)
+                        self.window.type_keys("{ENTER}", set_foreground=True)
+                        if parts[-1].upper() == "CARS":
+                            self.find_cars_window(timeout=5.0)
+                        return {"route": "keyboard_menu", "path": path}
         target = step.get("target")
         if not isinstance(target, dict):
             raise GuiAutomationError("menu action needs path or target")
@@ -480,7 +979,30 @@ class PlusGui:
         safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "window"
         output = self.artifact_dir / f"{safe}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
-        self.window.capture_as_image().save(output)
+        try:
+            self.window.capture_as_image().save(output)
+        except Exception:
+            # CARS can rename/reparent the Qt window after Run.  Keep the
+            # artifact useful without converting that normal UI transition
+            # into a calibration failure.
+            captured = False
+            try:
+                for candidate in self.desktop.windows(process=self.process_id):
+                    if candidate.is_visible():
+                        candidate.capture_as_image().save(output)
+                        captured = True
+                        break
+            except Exception:
+                pass
+            if not captured:
+                try:
+                    from PIL import ImageGrab  # type: ignore
+                    ImageGrab.grab().save(output)
+                    captured = True
+                except Exception:
+                    pass
+            if not captured:
+                raise
         return output
 
     @staticmethod
@@ -502,7 +1024,20 @@ class PlusGui:
         # A calibration report is an inventory, so one record per visible title
         # is clearer than duplicate copies of the identical control tree.
         seen_titles: set[str] = set()
-        for index, candidate in enumerate(self.desktop.windows(process=self.process_id)):
+        candidates = list(self.desktop.windows(process=self.process_id))
+        # A Qt menu or dialog can be a separate top-level UIA window. Include
+        # visible titled windows while excluding unrelated desktop apps.
+        try:
+            for candidate in self.desktop.windows():
+                if candidate in candidates or not candidate.is_visible():
+                    continue
+                title = candidate.window_text()
+                if title and ("PLUS" in title.upper() or "LEAS" in title.upper()
+                              or "CARS" in title.upper()):
+                    candidates.append(candidate)
+        except Exception:
+            pass
+        for index, candidate in enumerate(candidates):
             try:
                 title = candidate.window_text()
                 if title in seen_titles:
@@ -550,8 +1085,18 @@ def execute_steps(gui: PlusGui, steps: list[dict[str, Any]], context: dict[str, 
         target = step.get("target") if isinstance(step.get("target"), dict) else {}
         if action == "click":
             event = gui.click(target)
+        elif action == "click_if_present":
+            try:
+                event = {**gui.click(target), "optional": True}
+            except Exception as error:
+                event = {"route": "optional_not_present", "optional": True, "error": str(error)}
         elif action == "set_text":
-            event = gui.set_text(target, str(render_value(step.get("value", ""), context)))
+            event = gui.set_text(target, str(render_value(step.get("value", ""), context)),
+                                 commit=bool(step.get("commit", False)))
+        elif action == "select_files":
+            event = gui.select_files_clean(target, str(render_value(step.get("directory", step.get("value", "")), context)))
+        elif action == "select_directory":
+            event = gui.select_directory(target, str(render_value(step.get("directory", step.get("value", "")), context)))
         elif action == "select":
             event = gui.select(target, str(render_value(step.get("value", ""), context)))
         elif action == "menu":
@@ -559,8 +1104,135 @@ def execute_steps(gui: PlusGui, steps: list[dict[str, Any]], context: dict[str, 
         elif action == "hotkey":
             gui.window.type_keys(str(render_value(step.get("keys", ""), context)), set_foreground=True)
             event = {"route": "pywinauto", "keys": step.get("keys", "")}
+        elif action == "close_dialogs":
+            event = {"route": "pywinauto", "closed": gui.close_auxiliary_dialogs()}
+        elif action == "screen_type":
+            screen_point = target.get("screen_point") if isinstance(target, dict) else None
+            relative_point = target.get("point") if isinstance(target, dict) else None
+            point = relative_point if isinstance(relative_point, list) else screen_point
+            if not (isinstance(point, list) and len(point) == 2):
+                raise GuiAutomationError("screen_type needs target.point or target.screen_point")
+            # The main PLUS window remains the bridge owner while CARS is a
+            # separate Qt top-level dialog.  Bring CARS to the foreground so
+            # keyboard input cannot leak into the host terminal or picker.
+            cars_rectangle = None
+            relative_used = None
+            try:
+                cars_window = gui.find_cars_window()
+                cars_window.set_focus()
+                try:
+                    import ctypes
+                    user32 = ctypes.windll.user32
+                    user32.ShowWindow(int(cars_window.handle), 9)  # SW_RESTORE
+                    user32.BringWindowToTop(int(cars_window.handle))
+                    user32.SetForegroundWindow(int(cars_window.handle))
+                except Exception:
+                    pass
+                rectangle = cars_window.rectangle()
+                cars_rectangle = [rectangle.left, rectangle.top, rectangle.right, rectangle.bottom]
+                # Qt's QTableWidget reports a client rectangle whose origin
+                # does not match the top-level wrapper origin on this DPI
+                # scaled build.  Resolve the legacy points against the
+                # visible Land Demands stack and send a real screen double
+                # click; wrapper-relative input lands in the log pane.
+                if isinstance(relative_point, list):
+                    stack = next((item for item in cars_window.descendants()
+                                  if item.automation_id() == "QtGuiCARS.tabWidget.qt_tabwidget_stackedwidget"), None)
+                    if stack is not None:
+                        stack_rect = stack.rectangle()
+                        column = max(0, min(6, round((int(point[0]) - 480) / 100)))
+                        screen_x = int(stack_rect.left + 201 + column * 100)
+                        screen_y = int(stack_rect.top + 93)
+                    else:
+                        screen_x = int(rectangle.left + int(point[0]))
+                        screen_y = int(rectangle.top + int(point[1]))
+                else:
+                    screen_x = int(point[0])
+                    screen_y = int(point[1])
+                relative_used = [screen_x, screen_y]
+                import ctypes
+                user32 = ctypes.windll.user32
+                user32.SetCursorPos(screen_x, screen_y)
+                for _ in range(2):
+                    user32.mouse_event(2, 0, 0, 0, 0)
+                    user32.mouse_event(4, 0, 0, 0, 0)
+                    time.sleep(0.08)
+                time.sleep(0.15)
+            except Exception:
+                gui.click_screen(point)
+                time.sleep(0.1)
+                gui.click_screen(point)
+            try:
+                from pywinauto.keyboard import send_keys  # type: ignore
+                send_keys("{F2}")
+                send_keys("^a{BACKSPACE}", with_spaces=True)
+                send_keys(str(render_value(step.get("value", ""), context)), with_spaces=True)
+                send_keys("{ENTER}")
+            except Exception as error:
+                raise GuiAutomationError(f"screen keyboard input failed: {error}") from error
+            event = {"route": "uia_cars_relative_keyboard" if isinstance(relative_point, list) else "screen_point_keyboard",
+                     "x": int(point[0]), "y": int(point[1]), "cars_rectangle": cars_rectangle,
+                     "relative_used": relative_used}
+        elif action == "screen_type_absolute":
+            point = target.get("point") if isinstance(target, dict) else None
+            if not (isinstance(point, list) and len(point) == 2):
+                raise GuiAutomationError("screen_type_absolute needs target.point")
+            try:
+                cars_window = gui.find_cars_window()
+                cars_window.set_focus()
+                import ctypes
+                user32 = ctypes.windll.user32
+                user32.ShowWindow(int(cars_window.handle), 9)
+                user32.BringWindowToTop(int(cars_window.handle))
+                user32.SetForegroundWindow(int(cars_window.handle))
+                time.sleep(0.2)
+            except Exception as error:
+                raise GuiAutomationError(f"CARS window focus failed: {error}") from error
+            gui.click_screen([int(point[0]), int(point[1])])
+            try:
+                from pywinauto.keyboard import send_keys  # type: ignore
+                send_keys("{F2}")
+                send_keys("^a{BACKSPACE}" + str(render_value(step.get("value", ""), context)), with_spaces=True)
+                send_keys("{ENTER}")
+            except Exception as error:
+                raise GuiAutomationError(f"absolute screen keyboard input failed: {error}") from error
+            event = {"route": "screen_point_keyboard_absolute", "x": int(point[0]), "y": int(point[1])}
+        elif action == "cars_window_type":
+            point = target.get("point") if isinstance(target, dict) else None
+            if not (isinstance(point, list) and len(point) == 2
+                    and all(isinstance(value, (int, float)) for value in point)):
+                raise GuiAutomationError("cars_window_type needs target.point")
+            try:
+                cars_window = gui.find_cars_window()
+                cars_window.set_focus()
+                rectangle = cars_window.rectangle()
+                screen_x = int(rectangle.left + point[0])
+                screen_y = int(rectangle.top + point[1])
+                import ctypes
+                user32 = ctypes.windll.user32
+                user32.ShowWindow(int(cars_window.handle), 9)
+                user32.BringWindowToTop(int(cars_window.handle))
+                user32.SetForegroundWindow(int(cars_window.handle))
+                user32.SetCursorPos(screen_x, screen_y)
+                for _ in range(2):
+                    user32.mouse_event(2, 0, 0, 0, 0)
+                    user32.mouse_event(4, 0, 0, 0, 0)
+                    time.sleep(0.08)
+                from pywinauto.keyboard import send_keys  # type: ignore
+                send_keys("{F2}")
+                send_keys("^a{BACKSPACE}", with_spaces=True)
+                send_keys(str(render_value(step.get("value", ""), context)), with_spaces=True)
+                send_keys("{ENTER}")
+                event = {"route": "cars_window_relative_keyboard", "x": screen_x, "y": screen_y,
+                         "cars_rectangle": [rectangle.left, rectangle.top, rectangle.right, rectangle.bottom]}
+            except Exception as error:
+                raise GuiAutomationError(f"CARS window keyboard input failed: {type(error).__name__}: {error!r}") from error
         elif action == "wait":
-            seconds = min(float(step.get("seconds", 1)), 30.0)
+            # Explicit wait steps are used for an interactive vendor dialog
+            # that may need a human-scale pause before a resume/inspection.
+            # Keep a generous ceiling while still preventing an accidental
+            # unbounded sleep from a malformed profile.
+            seconds = min(float(step.get("seconds", 1)), 300.0)
             if seconds < 0:
                 raise GuiAutomationError("wait seconds cannot be negative")
             time.sleep(seconds)
@@ -618,6 +1290,27 @@ def stable_output(expected: Path) -> bool:
     # zero rather than incorrectly rejecting a zero-second stability request.
     apparent_age = max(0.0, time.time() - expected.stat().st_mtime)
     return apparent_age >= seconds
+
+
+def adopt_vendor_output(expected: Path, scenario: str) -> Path | None:
+    """Adopt PLUS's native ``PLUS_<scenario>Simulation_N.tif`` export.
+
+    The official GUI appends ``Simulation_1`` (and increments the suffix on
+    subsequent runs) instead of honoring the bridge contract filename.  A
+    successful run must still expose the stable per-scenario contract path;
+    copy the newest native export beside it and retain the native file for
+    provenance.
+    """
+    candidates = sorted(expected.parent.glob(f"PLUS_{scenario}Simulation_*.tif"),
+                        key=lambda item: item.stat().st_mtime, reverse=True)
+    if not candidates:
+        return None
+    source = candidates[0]
+    if source.resolve() == expected.resolve():
+        return source
+    import shutil
+    shutil.copy2(source, expected)
+    return source
 
 
 def initial_state(scenario: str, expected: Path, identity: dict[str, Any], profile_file: Path | None,
@@ -713,11 +1406,49 @@ def calibrate(envelope: dict[str, Any]) -> dict[str, Any]:
             closed_dialogs = gui.close_auxiliary_dialogs()
             time.sleep(0.3)
         if isinstance(open_menu, str):
-            gui.click({"uia": {"title": open_menu, "control_type": "MenuItem"}})
+            points = profile.get("calibration_menu_points", {})
+            point = points.get(open_menu) if isinstance(points, dict) else None
+            target = {"point": point} if isinstance(point, list) else {"uia": {"title": open_menu, "control_type": "MenuItem"}}
+            if isinstance(point, list):
+                gui.click_screen(point)
+            else:
+                gui.click(target)
             time.sleep(0.3)
         if isinstance(open_menu_item, str):
-            gui.click({"uia": {"title": open_menu_item, "control_type": "MenuItem"}})
+            # Qt menu actions are not always descendants of the main window;
+            # use the native menu path first, then fall back to a UIA click.
+            submenu_points = profile.get("calibration_submenu_points", {}) if isinstance(profile, dict) else {}
+            point = submenu_points.get(open_menu_item) if isinstance(submenu_points, dict) else None
+            if isinstance(point, list):
+                gui.click_screen(point)
+            elif isinstance(open_menu, str):
+                gui.menu({"path": f"{open_menu}->{open_menu_item}",
+                          "target": {"uia": {"title": open_menu_item, "control_type": "MenuItem"}}})
+            else:
+                gui.click({"uia": {"title": open_menu_item, "control_type": "MenuItem"}})
             time.sleep(0.5)
+        # Some PLUS child windows inherit a saved off-screen geometry (the
+        # calibration report may show coordinates around -32000). Bring such
+        # a window back onto the primary monitor before inventorying controls.
+        try:
+            for candidate in gui.desktop.windows():
+                title = candidate.window_text()
+                if title and ("PLUS" in title.upper() or "LEAS" in title.upper()
+                              or "CARS" in title.upper()):
+                    rect = candidate.rectangle()
+                    if rect.right < 0 or rect.bottom < 0:
+                        try:
+                            candidate.restore()
+                        except Exception:
+                            pass
+                        candidate.move_window(x=80, y=80)
+                        try:
+                            candidate.maximize()
+                        except Exception:
+                            pass
+                        candidate.set_focus()
+        except Exception:
+            pass
         label = "plus_v142_calibration"
         if isinstance(open_menu, str):
             label = "plus_v142_menu_" + re.sub(r"[^A-Za-z0-9_.-]+", "_", open_menu)
@@ -743,9 +1474,16 @@ def run_scenario(envelope: dict[str, Any]) -> dict[str, Any]:
     _, executable, identity = configured_installation()
     dry_run = bool(envelope.get("parameters", {}).get("dry_run", False))
     scenario, workspace, expected, state_path, state = write_request(envelope, identity, dry_run)
+    # A resumed run starts with a clean error field; the previous exception is
+    # retained in the request/state history and must not masquerade as the
+    # current attempt's result.
+    state.pop("error", None)
+    state.pop("reason", None)
+    write_json(state_path, state)
     detail = envelope.get("parameters", {}).get("parameters", {})
     detail = detail if isinstance(detail, dict) else {}
     history = [item for item in detail.get("historical_lulc", []) if isinstance(item, str)]
+    adopt_vendor_output(expected, scenario)
     if stable_output(expected):
         transition(state, "output_detected", status="running", output_detected_at=time.time())
         write_json(state_path, state)
@@ -789,7 +1527,9 @@ def run_scenario(envelope: dict[str, Any]) -> dict[str, Any]:
     write_json(state_path, state)
     try:
         gui = PlusGui(process_id, profile, profile_file, artifact_dir)
-        steps = scenario_steps(profile, scenario) if profile.get("calibrated") is True else []
+        settings = detail.get("plus_settings", {}) if isinstance(detail.get("plus_settings", {}), dict) else {}
+        phase = settings.get("phase") if isinstance(settings.get("phase"), str) else None
+        steps = scenario_steps(profile, scenario, phase=phase) if profile.get("calibrated") is True else []
         if not steps:
             calibration = gui.calibration()
             calibration_path = artifact_dir / "plus_v142_calibration.json"
@@ -808,11 +1548,23 @@ def run_scenario(envelope: dict[str, Any]) -> dict[str, Any]:
         screenshot = gui.capture("plus_v142_after_automation")
         state.update({"completed_steps": completed, "automation_events": events, "screenshot": str(screenshot)})
     except Exception as caught:
-        state.update({"status": "waiting_interactive", "lifecycle_status": "calibration_required", "reason": "gui_automation_needs_calibration", "error": str(caught),
-                      "process_id": process_id, "updated_at": time.time()})
+        # A late-stage Qt dialog failure (for example CARS closing after a
+        # rejected demand table) is not a calibration failure.  Keep the
+        # resumable handoff state explicit so the next run can attach to a
+        # fresh GUI and the user can inspect the saved screenshot/request.
+        late_stage = bool(str(state.get("current_step", "")).startswith("cars_") or state.get("completed_steps", []))
+        state.update({"status": "waiting_interactive",
+                      "lifecycle_status": "waiting_export" if late_stage else "calibration_required",
+                      "reason": "gui_automation_needs_attention" if late_stage else "gui_automation_needs_calibration",
+                      "error": str(caught), "process_id": process_id, "updated_at": time.time()})
         write_json(state_path, state)
         return response(envelope, "waiting_interactive", outputs=[str(state_path)], process_id=process_id,
                         message=f"HPSCIL PLUS GUI needs local calibration or attention: {caught}")
+    native_output = adopt_vendor_output(expected, scenario)
+    if native_output is not None:
+        state["native_output"] = str(native_output)
+        state["contract_output"] = str(expected)
+        write_json(state_path, state)
     if stable_output(expected):
         transition(state, "output_detected", status="running", output_detected_at=time.time())
         write_json(state_path, state)
