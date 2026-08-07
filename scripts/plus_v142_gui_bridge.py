@@ -658,6 +658,20 @@ class PlusGui:
                 control.click_input()
             return {"route": "pywinauto", "control": control.window_text()}
         except Exception as selector_error:
+            # Qt's native file picker can expose the primary Open action only
+            # visually (the SplitButton UIA node disappears on some DPI/Qt
+            # combinations).  When the request targets auto_id=1, the active
+            # dialog already owns focus after the filename was entered; Enter
+            # commits that filename without guessing a screen coordinate.
+            uia_target = target.get("uia") if isinstance(target, dict) else None
+            if (isinstance(uia_target, dict) and str(uia_target.get("auto_id")) == "1"
+                    and str(uia_target.get("control_type", "")) == "SplitButton"):
+                try:
+                    from pywinauto.keyboard import send_keys  # type: ignore
+                    send_keys("{ENTER}")
+                    return {"route": "keyboard_primary_open", "selector_error": str(selector_error)}
+                except Exception as keyboard_error:
+                    selector_error = keyboard_error
             x, y, score = self._template_center(target)
             self.window.click_input(coords=(x, y))
             return {"route": "image", "x": x, "y": y, "score": score, "selector_error": str(selector_error)}
