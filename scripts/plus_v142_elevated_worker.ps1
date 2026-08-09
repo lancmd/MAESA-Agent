@@ -8,5 +8,5 @@ param(
 
 $ErrorActionPreference = "Stop"
 $arguments = @($Bridge, "--elevated-request", $Request, "--elevated-response", $Response)
-$process = Start-Process -FilePath $Python -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+$process = Start-Process -FilePath $Python -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
 exit $process.ExitCode

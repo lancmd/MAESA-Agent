@@ -39,7 +39,7 @@ def copy_tree_files(src_root: Path, dst_root: Path, copied: list[Path]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project-root", type=Path, default=Path(r"C:\Users\master\Desktop\wanbei_six_cities"))
+    parser.add_argument("--project-root", type=Path, required=True)
     args = parser.parse_args()
     root = args.project_root.expanduser().resolve()
     result = root / "结果"

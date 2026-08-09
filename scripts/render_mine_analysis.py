@@ -220,7 +220,7 @@ def render_one(root: Path, output_root: Path, mine: str, city: str, geometry: di
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(); parser.add_argument("--project-root", type=Path, default=Path(r"C:\Users\master\Desktop\wanbei_six_cities")); parser.add_argument("--output", type=Path, default=None)
+    parser = argparse.ArgumentParser(); parser.add_argument("--project-root", type=Path, required=True); parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(); root = args.project_root.expanduser().resolve()
     output = (args.output or (root / "结果" / "分析统计图与表" / "矿区专题分析")).expanduser().resolve()
     selected = selected_geometries(paths(root)["boundary"], MINE_NAMES)

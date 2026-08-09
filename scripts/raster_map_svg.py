@@ -10,6 +10,7 @@ from pathlib import Path
 
 LULC = {
     "standard_6class": [(1, "Water", "#2b83ba"), (2, "Built-up", "#d7191c"), (3, "Cropland", "#fdae61"), (4, "Forest", "#1a9641"), (5, "Grassland", "#a6d96a"), (6, "Bare/mining", "#8c510a")],
+    "subsidence_water_6class": [(1, "Subsidence water", "#225ea8"), (2, "Natural water", "#41b6c4"), (3, "Built-up", "#d73027"), (4, "Cropland", "#fdae61"), (5, "Forest", "#1a9850"), (6, "Grassland", "#a6d96a")],
     "high_water_coal_7class": [(1, "Subsidence water", "#225ea8"), (2, "Natural water", "#41b6c4"), (3, "Built-up", "#d73027"), (4, "Cropland", "#fdae61"), (5, "Forest", "#1a9850"), (6, "Grassland", "#a6d96a"), (7, "Bare/mining", "#8c510a")],
 }
 
@@ -29,19 +30,32 @@ def main() -> int:
     parser.add_argument("--title", required=True); parser.add_argument("--kind", choices=("lulc", "continuous"), required=True)
     parser.add_argument("--scheme", choices=sorted(LULC), default="standard_6class")
     args = parser.parse_args()
+    import numpy as np  # type: ignore
     try:
-        import numpy as np  # type: ignore
         import rasterio  # type: ignore
-    except ImportError as error:
-        raise RuntimeError("map rendering needs numpy and rasterio") from error
-    with rasterio.open(args.raster) as source:
-        step = max(1, int(max(source.width, source.height) / 600))
-        data = source.read(1)[::step, ::step]; nodata = source.nodata
+    except ImportError:
+        from osgeo import gdal  # type: ignore
+        source = gdal.Open(str(args.raster), gdal.GA_ReadOnly)
+        if source is None:
+            raise RuntimeError(f"Cannot open raster: {args.raster}")
+        step = max(1, int(max(source.RasterXSize, source.RasterYSize) / 600))
+        data = source.GetRasterBand(1).ReadAsArray()[::step, ::step]
+        nodata = source.GetRasterBand(1).GetNoDataValue()
         valid = np.isfinite(data) & (data != nodata if nodata is not None else True)
         if not valid.any():
             raise ValueError("raster contains no drawable cells")
         minimum, maximum = float(data[valid].min()), float(data[valid].max())
-        crs, resolution = str(source.crs), (abs(source.transform.a) * step, abs(source.transform.e) * step)
+        transform = source.GetGeoTransform()
+        crs, resolution = source.GetProjectionRef(), (abs(transform[1]) * step, abs(transform[5]) * step)
+    else:
+        with rasterio.open(args.raster) as source:
+            step = max(1, int(max(source.width, source.height) / 600))
+            data = source.read(1)[::step, ::step]; nodata = source.nodata
+            valid = np.isfinite(data) & (data != nodata if nodata is not None else True)
+            if not valid.any():
+                raise ValueError("raster contains no drawable cells")
+            minimum, maximum = float(data[valid].min()), float(data[valid].max())
+            crs, resolution = str(source.crs), (abs(source.transform.a) * step, abs(source.transform.e) * step)
     cell, x0, y0 = 1.0, 55.0, 80.0
     legend_x = x0 + data.shape[1] + 30
     palette = {code: (name, color) for code, name, color in LULC[args.scheme]}

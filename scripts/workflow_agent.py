@@ -98,6 +98,114 @@ def arcgis_registry_paths() -> tuple[str | None, str | None]:
     return None, None
 
 
+def _idl_executables_from_root(root: str | Path | None) -> list[str]:
+    """Expand an IDL/ENVI installation root into likely 64-bit IDL commands.
+
+    ENVI installations do not all place ``idl.exe`` in the same directory.  A
+    configured value may already be an executable, an IDL root, or an ENVI
+    root containing an ``IDL88`` directory.  Keep this discovery read-only and
+    ordered so an explicit local configuration always wins.
+    """
+    if not root:
+        return []
+    candidate = Path(str(root)).expanduser()
+    if candidate.suffix.lower() == ".exe":
+        return [str(candidate)]
+    return [
+        str(candidate / "idl.exe"),
+        str(candidate / "bin" / "idl.exe"),
+        str(candidate / "bin" / "bin.x86_64" / "idl.exe"),
+        str(candidate / "IDL88" / "bin" / "bin.x86_64" / "idl.exe"),
+        str(candidate / "IDL89" / "bin" / "bin.x86_64" / "idl.exe"),
+        str(candidate / "IDL90" / "bin" / "bin.x86_64" / "idl.exe"),
+    ]
+
+
+def idl_registry_paths() -> list[str]:
+    """Discover vendor-installed IDL without recording a private path.
+
+    Different generations of IDL/ENVI have used Harris, NV5 and Exelis keys.
+    The function only reads a small set of installation values.  It returns
+    executable candidates; existence is still checked by ``first_existing``.
+    """
+    if sys.platform != "win32":
+        return []
+    try:
+        import winreg  # type: ignore[attr-defined]
+    except ImportError:
+        return []
+
+    candidates: list[str] = []
+    bases = (
+        r"SOFTWARE\\Harris\\IDL",
+        r"SOFTWARE\\Harris\\ENVI",
+        r"SOFTWARE\\NV5\\IDL",
+        r"SOFTWARE\\NV5\\ENVI",
+        r"SOFTWARE\\Exelis\\IDL",
+        r"SOFTWARE\\Exelis\\ENVI",
+        r"SOFTWARE\\WOW6432Node\\Harris\\IDL",
+        r"SOFTWARE\\WOW6432Node\\NV5\\IDL",
+        r"SOFTWARE\\WOW6432Node\\Exelis\\IDL",
+    )
+    value_names = ("InstallDir", "InstallPath", "IDL_DIR", "Path", "Location")
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for base in bases:
+            try:
+                with winreg.OpenKey(hive, base) as key:
+                    for value_name in value_names:
+                        try:
+                            value, _ = winreg.QueryValueEx(key, value_name)
+                        except OSError:
+                            continue
+                        candidates.extend(_idl_executables_from_root(value))
+                    # Versioned installations commonly store the same values
+                    # one level below the vendor product key.
+                    index = 0
+                    while True:
+                        try:
+                            child_name = winreg.EnumKey(key, index)
+                        except OSError:
+                            break
+                        index += 1
+                        try:
+                            with winreg.OpenKey(key, child_name) as child:
+                                for value_name in value_names:
+                                    try:
+                                        value, _ = winreg.QueryValueEx(child, value_name)
+                                    except OSError:
+                                        continue
+                                    candidates.extend(_idl_executables_from_root(value))
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+    return candidates
+
+
+def idl_common_install_paths() -> list[str]:
+    """Return common vendor installation candidates without recursive scans."""
+    if sys.platform != "win32":
+        return []
+    roots: list[Path] = []
+    for variable in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        value = os.getenv(variable)
+        if value:
+            roots.extend((Path(value) / "NV5", Path(value) / "Harris", Path(value) / "Exelis"))
+    candidates: list[str] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for pattern in ("IDL*", "ENVI*", "**/IDL*"):
+            try:
+                matches = root.glob(pattern)
+            except OSError:
+                continue
+            for match in matches:
+                if match.is_dir():
+                    candidates.extend(_idl_executables_from_root(match))
+    return candidates
+
+
 def software_version(name: str, executable: str | None) -> str | None:
     """Probe command-line versions where the vendor executable documents one safely."""
     if not executable or name not in {"invest", "gdalinfo"}:
@@ -145,6 +253,10 @@ def probe_software(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         ],
         "idl": [
             overrides.get("idl"), configured.get("idl"), os.getenv("IDL_EXE"), shutil.which("idl"),
+            *_idl_executables_from_root(os.getenv("IDL_DIR")),
+            *_idl_executables_from_root(os.getenv("ENVI_IDL_DIR")),
+            *idl_registry_paths(),
+            *idl_common_install_paths(),
         ],
         "plus": [overrides.get("plus"), configured.get("plus_v142_executable"), configured.get("plus"),
                  os.getenv("PLUS_V142_EXECUTABLE"), os.getenv("PLUS_EXE"), shutil.which("PLUS V1.4.2.exe")],

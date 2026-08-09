@@ -13,3 +13,9 @@ examples/huaibei_demo/data/
 examples/huaibei_demo/runtime/
 examples/huaibei_demo/screenshots/*
 !examples/huaibei_demo/screenshots/.gitkeep
+
+# Local test, visual-QA and project-specific working artefacts.
+.verification_wheel/
+.tmp_pytest_*.log
+tmp/
+config/gdp_2025_wanbei_targets.example.json

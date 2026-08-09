@@ -20,7 +20,8 @@ TARGETS = (
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project-root", type=Path, default=Path(r"C:\Users\master\Desktop\wanbei_six_cities"))
+    parser.add_argument("--project-root", type=Path, required=True,
+                        help="project workspace; this is required because the command removes derived folders")
     args = parser.parse_args()
     root = args.project_root.expanduser().resolve()
     removed: list[str] = []

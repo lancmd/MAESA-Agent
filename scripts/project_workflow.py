@@ -852,6 +852,16 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             scenario = str(raw_scenario).upper()
             stage_id, scenario_dir = f"plus_{scenario}", plus_root / scenario
             expected = expected_plus_raster(scenario_dir, scenario)
+            leas_driver_folder = ""
+            if driver_factors:
+                first_driver = next((value for value in driver_factors.values() if isinstance(value, str) and value), "")
+                if first_driver:
+                    leas_driver_folder = str(Path(first_driver).expanduser().resolve().parent)
+            # LEAS is trained on the last observed transition, not on the
+            # future target year.  For a 2026 forecast with 2020/2025 history
+            # this is land_expansion_2020_2025.tif.
+            expansion_years = (plus_history[-2][0], plus_history[-1][0]) if len(plus_history) >= 2 else (plus.get("baseline_year", 2025), plus.get("target_year", 2026))
+            expansion_input = workspace / "intermediate" / "plus_inputs" / f"land_expansion_{expansion_years[0]}_{expansion_years[1]}.tif"
             parameters: dict[str, Any] = {"historical_lulc": historical, "driver_factors": driver_factors,
                 "output_directory": str(scenario_dir), "expected_output": str(expected),
                 "plus_settings": {
@@ -859,6 +869,8 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                     "random_seed": plus.get("random_seed"), "neighborhood_weights": plus.get("neighborhood_weights"),
                     "transition_matrix": source_path(plus.get("transition_matrix"), base),
                     "constraint_raster": source_path(plus.get("constraint_raster"), base),
+                    "leas_driver_folder": leas_driver_folder,
+                    "leas_expansion_input": str(expansion_input),
                     "land_demand": plus.get("land_demand", {}).get(scenario, plus.get("land_demand", {})),
                 }}
             if scenario == "RE":

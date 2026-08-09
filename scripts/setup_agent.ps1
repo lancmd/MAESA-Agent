@@ -19,7 +19,7 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 
 & $venvPython -m pip install --upgrade pip
 $package = Join-Path $skillRoot "mcp_server"
-$extras = @("validation")
+$extras = @("validation", "reporting")
 if ($WithPyTorch) { $extras += "pytorch" }
 if ($WithPlusGui) { $extras += "plus-gui" }
 & $venvPython -m pip install -e "$package[$($extras -join ',')]"

@@ -1,17 +1,21 @@
 scenario,from_class,to_class,control_layer,value_type,value,unit,evidence,status,notes
-ND,all,all,scenario_definition,calibrated_historical_trend,,,historical_backcast,pending_validation,default natural-development baseline
-ND,all,all,land_demand,historical_trend,,,historical_backcast,pending_validation,calibrate before forecast
-UD,all,all,scenario_definition,urban_development,,,local_plan,pending_validation,default urban-development scenario
-UD,cropland,built_up,land_demand,relative_change,,,local_plan,pending_validation,do not treat as direct transition probability
-UD,grassland,built_up,conversion_matrix,allow_or_restrict,,,local_plan,pending_validation,confirm current PLUS matrix semantics
-EP,all,all,scenario_definition,ecological_protection,,,ecological_redline,pending_validation,default ecological-protection scenario
-EP,forest,built_up,conversion_matrix,allow_or_restrict,,,ecological_redline,pending_validation,protect statutory ecological space
-EP,bare_mining_land,forest,spatial_constraint,project_mask,,,restoration_plan,pending_validation,only within feasible restoration projects
-EP,bare_mining_land,grassland,spatial_constraint,project_mask,,,restoration_plan,pending_validation,check soil and engineering feasibility
-RE,all,all,scenario_definition,resource_extraction,,,mining_plan,pending_validation,default resource-extraction scenario
-RE,all,all,core_driver,continuous_raster,subsidence_depth_aligned.tif,m,external_PIM_w_dat,pending_validation,positive_down; aligned to PLUS master grid; not a rendered cloud map
-RE,all,all,additional_drivers,aligned_factor_set,,,driver_manifest,pending_validation,"retain terrain, accessibility, socioeconomic and mining factors"
-RE,cropland,subsidence_water,driver,continuous_suitability,,,PIM_groundwater_history,pending_validation,subsidence depth is not water
-RE,forest,subsidence_water,driver,continuous_suitability,,,PIM_groundwater_history,pending_validation,validate with historical water conversion
-RE,grassland,subsidence_water,driver,continuous_suitability,,,PIM_groundwater_history,pending_validation,validate with historical water conversion
-RE,all,built_up,land_demand,relative_change,,,mining_plan,pending_validation,link to approved mining infrastructure demand
+ND,all,all,scenario_definition,calibrated_historical_trend,1.00,relative_index,local_2020_2025_trend,pending_validation,"Historical-trend baseline; no additional policy constraint"
+ND,all,all,land_demand,local_trend_extrapolation,see_demand_table,pixels,local_LULC_2020_2025,pending_validation,"Use the generated 2026 four-scenario demand table"
+UD,all,all,scenario_definition,urban_development,1.00,relative_index,local_plan_plus_paper_rule,pending_validation,"Urban-development scenario"
+UD,cropland,built_up,conversion_matrix,relative_change,+20,percent,paper_scenario_rule,pending_validation,"Relative transition-probability control; not a direct area percentage"
+UD,forest,built_up,conversion_matrix,relative_change,+20,percent,paper_scenario_rule,pending_validation,"Relative transition-probability control; not a direct area percentage"
+UD,grassland,built_up,conversion_matrix,relative_change,+20,percent,paper_scenario_rule,pending_validation,"Relative transition-probability control; not a direct area percentage"
+UD,built_up,other,conversion_matrix,relative_change,-30,percent,paper_scenario_rule,pending_validation,"Protect existing built-up land from conversion"
+EP,all,all,scenario_definition,ecological_protection,1.00,relative_index,ecological_redline_plus_paper_rule,pending_validation,"Ecological-protection scenario"
+EP,forest,built_up,conversion_matrix,relative_change,-50,percent,paper_scenario_rule,pending_validation,"Reduce forest-to-built-up transition probability"
+EP,grassland,built_up,conversion_matrix,relative_change,-50,percent,paper_scenario_rule,pending_validation,"Reduce grassland-to-built-up transition probability"
+EP,cropland,built_up,conversion_matrix,relative_change,-30,percent,paper_scenario_rule,pending_validation,"Reduce cropland-to-built-up transition probability"
+EP,built_up,forest,conversion_matrix,relative_change,+10,percent,paper_scenario_rule,pending_validation,"Increase built-up-to-forest restoration probability"
+EP,ecological_land,built_up,spatial_constraint,restrict,1,boolean,ecological_redline,pending_validation,"Supply the local redline mask before final PLUS validation"
+RE,all,all,scenario_definition,resource_extraction,1.00,relative_index,mining_plan_plus_pim,pending_validation,"Resource-extraction scenario"
+RE,cropland,subsidence_water,conversion_matrix,relative_change,+30,percent,paper_scenario_rule,pending_validation,"Depth/workface evidence is applied before this relative control"
+RE,forest,subsidence_water,conversion_matrix,relative_change,+30,percent,paper_scenario_rule,pending_validation,"Depth/workface evidence is applied before this relative control"
+RE,grassland,subsidence_water,conversion_matrix,relative_change,+30,percent,paper_scenario_rule,pending_validation,"Depth/workface evidence is applied before this relative control"
+RE,all,built_up,land_demand,relative_change,+20,percent,mining_plan,pending_validation,"Mining/industrial demand proxy; replace with approved local demand"
+RE,all,all,core_driver,continuous_raster,subsidence_depth_2026_positive_down_30m_utm50n.tif,m,local_PIM_or_w_dat,pending_validation,"Positive-down depth on the 30 m master grid; restricted to workface evidence"
+RE,all,all,additional_drivers,aligned_factor_set,see_project_driver_manifest,30m,local_driver_manifest,pending_validation,"Terrain, accessibility, socioeconomic and climate factors"

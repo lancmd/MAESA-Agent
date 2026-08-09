@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
     "arcgis_layout_helpers_smoke.py",
     "real_raster_integration_smoke.py",
     "subsidence_water_carbon_smoke.py",
+    "report_asset_contract_smoke.py",
 ])
 def test_contract_smokes(script: str) -> None:
     process = subprocess.run([sys.executable, str(ROOT / "tests" / script)], cwd=ROOT,
