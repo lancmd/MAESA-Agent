@@ -48,7 +48,13 @@ def main() -> int:
                 area = abs(float(source.transform.a * source.transform.e)) / 10000.0
                 for _, window in source.block_windows(1):
                     data = source.read(1, window=window, masked=True).compressed()
-                    counts.update(int(value) for value in np.unique(data) if int(value) in LABELS)
+                    # ``np.unique`` alone only contributed one occurrence per
+                    # class per block, which understated all rasterio-derived
+                    # areas and carbon totals.  Count every matching pixel.
+                    for value in np.unique(data):
+                        code = int(value)
+                        if code in LABELS:
+                            counts[code] += int(np.count_nonzero(data == value))
         else:
             dataset = gdal.Open(str(raster))
             if dataset is None:

@@ -94,7 +94,10 @@ def habitat_checks(args: dict[str, Any], datastack: Path, errors: list[str], war
     missing_threat = missing_headers(threat_headers, {"threat", "max_dist", "weight", "decay", "cur_path"})
     if missing_threat:
         errors.append("Habitat Quality threats table misses: " + ", ".join(sorted(missing_threat)))
-    missing_sensitivity = missing_headers(sensitivity_headers, {"lulc", "habitat"})
+    # InVEST 3.18 requires ``lucode``.  ``lulc`` is accepted only for
+    # backwards-compatible validation of legacy parameter files.
+    code_column = "lucode" if "lucode" in sensitivity_headers else "lulc"
+    missing_sensitivity = missing_headers(sensitivity_headers, {code_column, "habitat"})
     if missing_sensitivity:
         errors.append("Habitat Quality sensitivity table misses: " + ", ".join(sorted(missing_sensitivity)))
     if not (threats and sensitivity and lulc) or missing_threat or missing_sensitivity:
@@ -131,12 +134,12 @@ def habitat_checks(args: dict[str, Any], datastack: Path, errors: list[str], war
         if absent:
             errors.append("Habitat Quality sensitivity table has no columns for threats: " + ", ".join(absent))
         extra_columns = sorted({value for value in sensitivity_headers
-                                if value.casefold() not in {"lulc", "habitat", *[name.casefold() for name in names]}})
+                                if value.casefold() not in {"lucode", "lulc", "habitat", *[name.casefold() for name in names]}})
         if extra_columns:
             warnings.append("Habitat Quality sensitivity table has unused columns: " + ", ".join(extra_columns))
         sensitivity_codes: set[int] = set()
         for index, row in enumerate(sensitivity_rows, start=2):
-            code = integer(row.get("lulc"), f"Habitat Quality sensitivity row {index} lulc")
+            code = integer(row.get(code_column), f"Habitat Quality sensitivity row {index} {code_column}")
             if code in sensitivity_codes:
                 raise ValueError(f"Habitat Quality sensitivity table has duplicate lulc: {code}")
             sensitivity_codes.add(code)

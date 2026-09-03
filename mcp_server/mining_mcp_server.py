@@ -41,7 +41,7 @@ from path_safety import PathSafetyError, is_unc, require_within  # noqa: E402
 DEFAULT_REGISTRY = ROOT / "interfaces" / "backend_registry.json"
 EXAMPLE_REGISTRY = ROOT / "interfaces" / "backend_registry.example.json"
 VALID_PLUS_SCENARIOS = frozenset({"ND", "UD", "EP", "RE"})
-INPUT_PATH_KEYS = {"path", "project_file", "project", "datastack", "model_package", "input_raster", "training_vector",
+INPUT_PATH_KEYS = {"path", "plan", "project_root", "project_file", "project", "datastack", "model_package", "input_raster", "training_vector",
                    "criteria_table", "config", "samples_file", "reference_raster", "predicted_raster", "baseline_raster",
                    "workflow_raster", "independent_raster", "scores_table", "candidates_table", "sample_table", "samples_table",
                    "validation_samples", "geodetector_samples",
@@ -360,6 +360,15 @@ def prepare_all_plus_scenarios(project_file: str, output_job: str | None = None,
     """Create ND/UD/EP/RE request packs and GUI checklists without opening multiple PLUS windows."""
     return json_result(registry.call(backend, "project.prepare_plus_scenarios", {
         "project_file": project_file, "output_job": output_job,
+    }))
+
+
+@mcp.tool()
+def finalize_project_results(project_root: str, plan: str, apply: bool = False,
+                             sha256: bool = False, backend: str = "project") -> str:
+    """Preview or apply an explicit final-results plan; raw inputs listed in preserve cannot be cleaned."""
+    return json_result(registry.call(backend, "project.finalize_results", {
+        "project_root": project_root, "plan": plan, "apply": apply, "sha256": sha256,
     }))
 
 

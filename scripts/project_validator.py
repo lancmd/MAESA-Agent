@@ -395,8 +395,8 @@ def validate(project_path: Path) -> dict[str, Any]:
         if engine not in VALID_ENGINES:
             errors.append(f"classification.engine must be one of {sorted(VALID_ENGINES)}")
         scheme = classification.get("scheme")
-        if scheme not in {"standard_6class", "high_water_coal_7class"}:
-            errors.append("classification.scheme must be standard_6class or high_water_coal_7class")
+        if scheme not in {"standard_6class", "mining_water_6class", "high_water_coal_7class"}:
+            errors.append("classification.scheme must be standard_6class, mining_water_6class, or high_water_coal_7class")
         configured_envi_method = classification.get("envi_method", "maximum_likelihood")
         if engine == "envi" and configured_envi_method not in VALID_ENVI_METHODS:
             errors.append("classification.envi_method must be maximum_likelihood or minimum_distance")

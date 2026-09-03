@@ -1,6 +1,6 @@
 [project]
 name = "mining-gis-mcp"
-version = "0.4.2"
+version = "0.5.0"
 description = "Local-first MCP tools for mining-area GIS workflows"
 requires-python = ">=3.11"
 dependencies = ["mcp[cli]>=1.2,<2"]

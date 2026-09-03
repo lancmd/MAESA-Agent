@@ -155,7 +155,7 @@ def main() -> int:
     parser.add_argument(
         "--analysis-root",
         type=Path,
-        help="directory containing the generated CSV tables; defaults to root/outputs/论文分析结果_20260806",
+        help="directory containing the generated CSV tables; defaults to root/outputs/analysis",
     )
     parser.add_argument(
         "--figure-root",
@@ -164,11 +164,11 @@ def main() -> int:
     )
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
-    analysis_root = (args.analysis_root or (root / "outputs" / "论文分析结果_20260806")).expanduser().resolve()
+    analysis_root = (args.analysis_root or (root / "outputs" / "analysis")).expanduser().resolve()
     out = (args.figure_root or (analysis_root / "scipilot_figures")).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
     setup_style(journal="general", lang="zh", serif_for_zh=True, use_sciplots=False)
-    demand_heatmap(out, root / "outputs" / "plus_scenario_demand_20260806" / "2026四情景土地利用需求_hm2.csv")
+    demand_heatmap(out, root / "outputs" / "plus_scenario_demand" / "2026四情景土地利用需求_hm2.csv")
     historical_service_panels(out, analysis_root / "历史时期生态服务统计.csv")
     scenario_table = analysis_root / "2026年四情景生态服务统计.csv"
     if scenario_table.exists():

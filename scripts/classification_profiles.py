@@ -131,12 +131,12 @@ def profile(sensor: str, method: str = "auto", scheme: str = "high_water_coal_7c
         method = "maximum_likelihood"
     if method not in _METHODS:
         raise ValueError("method must be auto, maximum_likelihood, or minimum_distance")
-    if scheme not in {"standard_6class", "high_water_coal_7class"}:
-        raise ValueError("scheme must be standard_6class or high_water_coal_7class")
+    if scheme not in {"standard_6class", "mining_water_6class", "high_water_coal_7class"}:
+        raise ValueError("scheme must be standard_6class, mining_water_6class, or high_water_coal_7class")
     result = deepcopy(_PROFILES[canonical])
     result["classification_method"] = deepcopy(_METHODS[method])
     result["scheme"] = scheme
-    result["class_codes"] = ([1, 2, 3, 4, 5, 6] if scheme == "standard_6class" else [1, 2, 3, 4, 5, 6, 7])
+    result["class_codes"] = ([1, 2, 3, 4, 5, 6] if scheme in {"standard_6class", "mining_water_6class"} else [1, 2, 3, 4, 5, 6, 7])
     result["status"] = "completed"
     return result
 

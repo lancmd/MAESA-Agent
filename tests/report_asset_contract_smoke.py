@@ -34,8 +34,8 @@ def main() -> None:
 
     # Do not let a report imply unmeasured classification or PLUS accuracy.
     assert '"validation_status": "pending_validation"' in report
-    assert "FoM、关键地类精度和多随机种子稳定性" in report
-    assert "不报告虚构精度" in report
+    assert "PLUS FoM and multi-seed stability are not available" in report
+    assert "scenario labels are not treated as verified policy effects" in report
     assert "three_line_table" in report
 
     # The public entry point documents local-first execution and doesn't

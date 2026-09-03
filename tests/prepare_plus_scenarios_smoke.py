@@ -7,6 +7,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
+import rasterio
+from rasterio.transform import from_origin
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -20,6 +24,10 @@ with tempfile.TemporaryDirectory(dir=OUTPUT_ROOT) as temporary:
     root = Path(temporary); data = root / "data"; data.mkdir()
     for name in ("a.tif", "b.tif", "driver.tif", "subsidence.tif"):
         (data / name).write_bytes(b"placeholder")
+    with rasterio.open(data / "subsidence_zone_plus_uint8.tif", "w", driver="GTiff", width=2, height=2,
+                       count=1, dtype="uint8", crs="EPSG:32650", transform=from_origin(0, 60, 30, 30),
+                       nodata=0) as dataset:
+        dataset.write(np.array([[0, 1], [1, 0]], dtype="uint8"), 1)
     project = {
         "schema_version": 2, "project_id": "prepare-plus-smoke", "workspace": "runtime",
         "security": {"input_roots": ["data"], "output_root": "."},

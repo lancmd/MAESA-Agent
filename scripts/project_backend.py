@@ -18,6 +18,7 @@ from analysis_validation import validate_results  # noqa: E402
 from lulc_accuracy import evaluate as evaluate_lulc  # noqa: E402
 from workflow_agent import JobRunner  # noqa: E402
 from prepare_plus_scenarios import prepare as prepare_plus_scenarios  # noqa: E402
+from finalize_project_results import finalize as finalize_results  # noqa: E402
 from job_manager import cancel as cancel_job, outputs as job_outputs, status as job_status, submit as submit_job  # noqa: E402
 
 
@@ -26,7 +27,7 @@ def main() -> int:
     if envelope.get("operation") == "system.capabilities":
         result = {"status": "completed", "result": {"backend": "project", "mode": "local-command", "operations": [
             "system.capabilities", "project.build_from_inputs", "project.validate", "project.inspect_readiness", "project.compile_workflow", "project.run_workflow",
-            "project.prepare_plus_scenarios", "project.submit_workflow", "system.job_status", "system.cancel_job", "system.list_outputs",
+            "project.prepare_plus_scenarios", "project.finalize_results", "project.submit_workflow", "system.job_status", "system.cancel_job", "system.list_outputs",
             "analysis.validate_results", "analysis.lulc_accuracy", "analysis.plus_validation", "analysis.invest_consistency",
         ]}}
     elif envelope.get("operation") == "project.build_from_inputs":
@@ -101,6 +102,12 @@ def main() -> int:
         output = params.get("output_job")
         report = prepare_plus_scenarios(Path(params["project_file"]), Path(output) if output else None)
         result = {"status": "completed", "result": report, "outputs": [report["workflow_job"], report["manifest"]]}
+    elif envelope.get("operation") == "project.finalize_results":
+        params = envelope["parameters"]
+        report = finalize_results(Path(params["project_root"]), Path(params["plan"]),
+                                  bool(params.get("apply", False)), bool(params.get("sha256", False)))
+        outputs = [report["manifest"]] if report.get("manifest") else []
+        result = {"status": report["status"], "result": report, "outputs": outputs}
     elif envelope.get("operation") == "project.submit_workflow":
         params = envelope["parameters"]
         output = params.get("output_job")

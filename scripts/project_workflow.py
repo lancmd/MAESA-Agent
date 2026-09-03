@@ -786,6 +786,17 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                                        "--master", master_lulc, "--output", depth, "--kind", "continuous", "--resampling", "bilinear"],
                            "inputs": [subsidence_depth, master_lulc], "outputs": [depth, depth + ".metadata.json"], "depends_on": prepared_dependencies.copy()})
             subsidence_depth = depth; aligned_stages.append("align_subsidence_depth")
+        re_zone: str | None = None
+        if (plus.get("enabled") and "RE" in plus.get("scenarios", []) and subsidence_depth):
+            re_zone = str(Path(subsidence_depth).with_name("subsidence_zone_plus_uint8.tif"))
+            threshold = plus.get("resource_extraction", {}).get("development_zone_threshold_m", 0.0)
+            stages.append({"id": "prepare_plus_re_zone", "adapter": "command", "enabled": True,
+                           "command": [sys.executable, str(ROOT / "scripts" / "prepare_plus_re_zone.py"),
+                                       "--input", subsidence_depth, "--output", re_zone,
+                                       "--threshold", str(threshold)],
+                           "inputs": [subsidence_depth], "outputs": [re_zone],
+                           "depends_on": aligned_stages[-1:] or prepared_dependencies.copy()})
+            aligned_stages.append("prepare_plus_re_zone")
         if plus.get("enabled") and plus_history:
             dataset_entries = [{"name": "master_lulc", "path": master_lulc, "kind": "lulc", "allowed_codes": allowed_codes(classification.get("scheme", "standard_6class")), "must_align": False, "expected_cell_size_m": 30}]
             dataset_entries += [{"name": f"driver_{name}", "path": path,
@@ -793,11 +804,14 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                                  "must_align": True, "expected_cell_size_m": 30} for name, path in prepared_drivers.items()]
             if subsidence_depth:
                 dataset_entries.append({"name": "subsidence_depth", "path": subsidence_depth, "kind": "subsidence_depth", "must_align": True})
+            if re_zone:
+                dataset_entries.append({"name": "re_development_zone", "path": re_zone, "kind": "categorical",
+                                        "allowed_codes": [0, 1], "must_align": True})
             spec_path, report_path = workspace / "generated" / "plus_input_preflight.json", workspace / "validation" / "plus_input_preflight.json"
             write_json(spec_path, {"master": "master_lulc", "datasets": dataset_entries, "carbon_density": carbon})
             stages.append({"id": "plus_input_preflight", "adapter": "command", "enabled": True,
                            "command": [sys.executable, str(ROOT / "scripts" / "spatial_preflight.py"), "--spec", str(spec_path), "--output", str(report_path)],
-                           "inputs": [master_lulc, *prepared_drivers.values()] + ([subsidence_depth] if subsidence_depth else []), "outputs": [str(report_path)],
+                           "inputs": [master_lulc, *prepared_drivers.values()] + ([subsidence_depth] if subsidence_depth else []) + ([re_zone] if re_zone else []), "outputs": [str(report_path)],
                            "depends_on": aligned_stages or prepared_dependencies.copy()})
             prepared_dependencies = ["plus_input_preflight"]
 
@@ -844,24 +858,60 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
 
     plus_outputs: dict[str, str] = {}
     plus_validation_dependencies: list[str] = []
+    plus_scenario_dependencies: dict[str, str] = {}
     if plus.get("enabled"):
         driver_factors = prepared_drivers
         historical = [path for _, path in plus_history]
         plus_root = Path(output_path(plus.get("output_workspace", "outputs/plus"), workspace))
+        # LEAS learns from the last observed LULC transition.  The vendor GUI
+        # expects two concrete inputs that must be materialised before any
+        # scenario is opened: (1) a zero/changed-class expansion raster and
+        # (2) a single-folder stack of grid-aligned feature rasters.  Earlier
+        # jobs only *referenced* these paths, which let an old workspace hide
+        # the omission and made a clean workspace fail in the file picker.
+        plus_dependencies = prepared_dependencies.copy()
+        leas_driver_folder = ""
+        expansion_input: Path | None = None
+        if len(plus_history) >= 2:
+            previous_year, previous_lulc = plus_history[-2]
+            latest_year, latest_lulc = plus_history[-1]
+            expansion_input = (workspace / "intermediate" / "plus_inputs" /
+                               f"land_expansion_{previous_year}_{latest_year}.tif")
+            expansion_stage = f"plus_land_expansion_{previous_year}_{latest_year}"
+            stages.append({"id": expansion_stage, "adapter": "command", "enabled": True,
+                           "command": [sys.executable, str(ROOT / "scripts" / "build_plus_land_expansion.py"),
+                                       "--previous", previous_lulc, "--latest", latest_lulc,
+                                       "--output", str(expansion_input)],
+                           "inputs": [previous_lulc, latest_lulc],
+                           "outputs": [str(expansion_input), str(expansion_input) + ".json"],
+                           "depends_on": plus_dependencies})
+            feature_folder = workspace / "intermediate" / "plus_inputs" / "leas_features"
+            feature_report = feature_folder / "leas_input_manifest.json"
+            stages.append({"id": "plus_leas_input_contract", "adapter": "command", "enabled": True,
+                           "command": [sys.executable, str(ROOT / "scripts" / "prepare_plus_leas_inputs.py"),
+                                       "--drivers", str(Path(next(iter(driver_factors.values()))).parent),
+                                       "--previous", previous_lulc, "--latest", latest_lulc,
+                                       "--expansion", str(expansion_input), "--output", str(feature_folder),
+                                       "--report", str(feature_report)],
+                           "inputs": [previous_lulc, latest_lulc, str(expansion_input), *driver_factors.values()],
+                           "outputs": [str(feature_report)], "depends_on": [expansion_stage]})
+            plus_dependencies = ["plus_leas_input_contract"]
+            leas_driver_folder = str(feature_folder)
         for raw_scenario in plus.get("scenarios", ["ND", "UD", "EP", "RE"]):
             scenario = str(raw_scenario).upper()
             stage_id, scenario_dir = f"plus_{scenario}", plus_root / scenario
             expected = expected_plus_raster(scenario_dir, scenario)
-            leas_driver_folder = ""
-            if driver_factors:
+            scenario_leas_driver_folder = leas_driver_folder
+            if not scenario_leas_driver_folder and driver_factors:
                 first_driver = next((value for value in driver_factors.values() if isinstance(value, str) and value), "")
                 if first_driver:
-                    leas_driver_folder = str(Path(first_driver).expanduser().resolve().parent)
+                    scenario_leas_driver_folder = str(Path(first_driver).expanduser().resolve().parent)
             # LEAS is trained on the last observed transition, not on the
             # future target year.  For a 2026 forecast with 2020/2025 history
             # this is land_expansion_2020_2025.tif.
             expansion_years = (plus_history[-2][0], plus_history[-1][0]) if len(plus_history) >= 2 else (plus.get("baseline_year", 2025), plus.get("target_year", 2026))
-            expansion_input = workspace / "intermediate" / "plus_inputs" / f"land_expansion_{expansion_years[0]}_{expansion_years[1]}.tif"
+            scenario_expansion_input = expansion_input or (workspace / "intermediate" / "plus_inputs" /
+                                                            f"land_expansion_{expansion_years[0]}_{expansion_years[1]}.tif")
             parameters: dict[str, Any] = {"historical_lulc": historical, "driver_factors": driver_factors,
                 "output_directory": str(scenario_dir), "expected_output": str(expected),
                 "plus_settings": {
@@ -869,8 +919,8 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
                     "random_seed": plus.get("random_seed"), "neighborhood_weights": plus.get("neighborhood_weights"),
                     "transition_matrix": source_path(plus.get("transition_matrix"), base),
                     "constraint_raster": source_path(plus.get("constraint_raster"), base),
-                    "leas_driver_folder": leas_driver_folder,
-                    "leas_expansion_input": str(expansion_input),
+                    "leas_driver_folder": scenario_leas_driver_folder,
+                    "leas_expansion_input": str(scenario_expansion_input),
                     "land_demand": plus.get("land_demand", {}).get(scenario, plus.get("land_demand", {})),
                 }}
             if scenario == "RE":
@@ -880,17 +930,31 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
             request = {"protocol_version": "1.0", "request_id": stage_id, "operation": "plus.run_scenario",
                        "parameters": {"project": str(project_path), "scenario": scenario, "workspace": str(scenario_dir),
                                       "parameters": parameters}}
-            stage_inputs = [*historical, *driver_factors.values()]
+            stage_inputs = [*historical, *driver_factors.values(), str(scenario_expansion_input)]
             if scenario == "RE":
                 stage_inputs.append(parameters["resource_extraction"]["core_driver_input"])
             stages.append({"id": stage_id, "adapter": "plus", "enabled": True, "request": request,
-                           "inputs": stage_inputs, "outputs": [str(expected)], "depends_on": prepared_dependencies.copy()})
+                           "inputs": stage_inputs, "outputs": [str(expected)], "depends_on": plus_dependencies.copy()})
             validation_id = lulc_validation_stage(stages, f"plus_output_validation_{scenario}", str(expected), historical[-1],
                                                   classification.get("scheme", "standard_6class"), carbon, workspace, [stage_id])
+            demand = parameters["plus_settings"]["land_demand"]
+            if not isinstance(demand, dict):
+                raise ValueError(f"PLUS {scenario} land demand must be a class-code mapping")
+            demand_json = workspace / "generated" / f"plus_{scenario}_land_demand.json"
+            write_json(demand_json, demand)
+            demand_validation_id = f"plus_land_demand_validation_{scenario}"
+            demand_validation = scenario_dir / "plus_land_demand_validation.json"
+            stages.append({"id": demand_validation_id, "adapter": "command", "enabled": True,
+                           "command": [sys.executable, str(ROOT / "scripts" / "validate_plus_land_demand.py"),
+                                       "--raster", str(expected), "--demand-json", str(demand_json),
+                                       "--output", str(demand_validation)],
+                           "inputs": [str(expected), str(demand_json)], "outputs": [str(demand_validation)],
+                           "depends_on": [validation_id]})
             add_raster_map(stages, f"PLUS_{scenario}", str(expected), f"PLUS {scenario} scenario", "lulc",
-                           classification.get("scheme", "standard_6class"), workspace, [validation_id])
+                           classification.get("scheme", "standard_6class"), workspace, [demand_validation_id])
             plus_outputs[scenario] = str(expected)
-            plus_validation_dependencies.append(validation_id)
+            plus_validation_dependencies.append(demand_validation_id)
+            plus_scenario_dependencies[scenario] = demand_validation_id
 
     invest_outputs: dict[str, str] = {}
     invest_service_outputs: dict[str, dict[str, str]] = {}
@@ -914,7 +978,7 @@ def compile_workflow(project_path: Path, output_job: Path | None = None) -> dict
         dependency_by_scenario = {scenario: lulc_dependency.copy() for scenario in historical_sources}
         for scenario, path in plus_outputs.items():
             lulc_sources[scenario] = path
-            dependency_by_scenario[scenario] = [f"plus_output_validation_{scenario}"]
+            dependency_by_scenario[scenario] = [plus_scenario_dependencies[scenario]]
         for model, model_config in enabled_invest_models(invest).items():
             for scenario, source_lulc in lulc_sources.items():
                 suffix = "" if scenario == "baseline" else f"_{scenario}"

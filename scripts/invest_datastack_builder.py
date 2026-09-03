@@ -165,7 +165,10 @@ def _normalise_sensitivity(config: dict[str, Any], base: Path, lulc_values: set[
     for index, raw in enumerate(rows):
         if not isinstance(raw, dict):
             raise ValueError(f"sensitivity[{index}] must be an object")
-        code = _code(raw.get("lulc"), f"sensitivity[{index}].lulc")
+        # InVEST 3.18 requires the canonical ``lucode`` field.  Accept the
+        # legacy ``lulc`` spelling on input so existing project templates can
+        # be rebuilt without silently changing their class semantics.
+        code = _code(raw.get("lucode", raw.get("lulc")), f"sensitivity[{index}].lucode")
         if code in codes:
             raise ValueError(f"sensitivity has duplicate lulc code {code}")
         codes.add(code)
@@ -178,17 +181,17 @@ def _normalise_sensitivity(config: dict[str, Any], base: Path, lulc_values: set[
         for threat in threat_names:
             value = raw.get(threat, nested.get(threat))
             values[threat] = _number(value, f"sensitivity[{index}].{threat}", bounded=True)
-        extras = (set(nested) | (set(raw) - {"lulc", "habitat", "threats"})) - set(threat_names)
+        extras = (set(nested) | (set(raw) - {"lucode", "lulc", "habitat", "threats"})) - set(threat_names)
         if extras:
             raise ValueError(f"sensitivity[{index}] names not declared in threats: {', '.join(sorted(extras))}")
-        result.append({"lulc": code, "habitat": habitat, **values})
+        result.append({"lucode": code, "habitat": habitat, **values})
     missing = sorted(lulc_values - codes)
     extra = sorted(codes - lulc_values)
     if missing:
         raise ValueError("sensitivity has no LULC rows for: " + ", ".join(map(str, missing)))
     if extra:
         warnings.append("sensitivity contains LULC rows absent from this raster: " + ", ".join(map(str, extra)))
-    return sorted(result, key=lambda row: int(row["lulc"])), warnings
+    return sorted(result, key=lambda row: int(row["lucode"])), warnings
 
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
@@ -239,7 +242,7 @@ def build_habitat_quality_datastack(config: dict[str, Any], output_dir: Path, *,
         raise FileExistsError("Habitat Quality builder would overwrite existing outputs; pass confirm_overwrite: true or --confirm-overwrite: " +
                               ", ".join(str(path) for path in existing))
     _write_csv(threats_table, ["threat", "max_dist", "weight", "decay", "cur_path", "fut_path"], threats)
-    _write_csv(sensitivity_table, ["lulc", "habitat", *threat_names], sensitivity)
+    _write_csv(sensitivity_table, ["lucode", "habitat", *threat_names], sensitivity)
     args: dict[str, Any] = {
         "lulc_cur_path": str(lulc), "threats_table_path": str(threats_table),
         "sensitivity_table_path": str(sensitivity_table), "half_saturation_constant": half_saturation,

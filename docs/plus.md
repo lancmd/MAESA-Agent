@@ -11,4 +11,4 @@ PLUS 输入为至少两期严格对齐的 LULC、需求/转换规则和类型明
 
 RE 的沉陷驱动必须是与主网格对齐、单位为 m、`positive_down` 的深度栅格。MAESA 不计算概率积分法预测；用户提供外部 `w.dat` 或深度 GeoTIFF。
 
-官方 PLUS GUI 通过本地 pywinauto 优先、截图模板后备的桥接运行。每个情景拥有独立请求、状态和输出目录：`outputs/plus/<scenario>/PLUS_<scenario>.tif`。首次使用需校准 GUI；状态会依次记录 `prepared`、`calibration_required`、`running_gui`、`waiting_export`、`output_detected`、`validated` 或 `completed`，可在中断后接管已有输出。
+官方 PLUS GUI 通过本地 pywinauto 优先、截图模板后备的桥接运行。每个情景拥有独立请求、状态和输出目录：`outputs/plus/<scenario>/PLUS_<scenario>.tif`。首次使用需校准 GUI；状态会依次记录 `prepared`、`calibration_required`、`running_gui`、`waiting_export`、`output_detected`、`validated` 或 `completed`，可在中断后接管已有输出。CARS 写出原生 `PLUS_<scenario>*Simulation_*.tif` 后，后续桥接调用仅执行本地采用与栅格验收，不再重复触发 UAC；因此即使提权 worker 没有返回，也可安全完成输出闭环。

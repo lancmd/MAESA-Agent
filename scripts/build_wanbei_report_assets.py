@@ -91,33 +91,51 @@ def save(fig, out: Path, stem: str) -> None:
 
 
 def collect(root: Path) -> dict:
-    stats = root / "outputs" / "statistics"
-    carbon_rows = read_csv(stats / "carbon_storage_2005_2025.csv")
-    habitat_service = read_csv(stats / "habitat_ecosystem_service_2005_2025.csv")
-    carbon_water = read_csv(stats / "invest_carbon_water_yield_2005_2025.csv")
-    by_year = {year: {} for year in YEARS}
-    for row in carbon_rows:
-        by_year[int(row["year"])]["carbon_mg_c"] = float(row["value"])
-    for row in carbon_water:
+    stats = root / "outputs" / "statistics_harmonized_v2_common_support"
+    historical_path = stats / "生态系统服务五期汇总统计_原生InVEST生境.csv"
+    if not historical_path.is_file():
+        raise FileNotFoundError(
+            "common-support statistics are required before report generation: "
+            f"{historical_path}"
+        )
+    by_year: dict[int, dict[str, float]] = {}
+    for row in read_csv(historical_path):
         year = int(row["year"])
-        if row["service"] == "water_yield_m3":
-            by_year[year]["water_m3"] = float(row["value"])
-            by_year[year]["water_mean_mm"] = float(row["raw_mean"])
-    for row in habitat_service:
-        year = int(row["year"])
-        if row["service"] == "habitat_quality":
-            by_year[year]["habitat_mean"] = float(row["mean"])
-        elif row["service"] == "ecosystem_service":
-            by_year[year]["service_mean"] = float(row["mean"])
+        by_year[year] = {
+            "carbon_mg_c": float(row["carbon_storage_MgC"]),
+            "water_m3": float(row["water_yield_volume_m3"]),
+            "water_mean_mm": float(row["mean_water_yield_mm"]),
+            "habitat_mean": float(row["mean_habitat_quality_index"]),
+            "service_mean": float(row["mean_composite_ecosystem_service_index"]),
+            "common_boundary_area_ha": float(row["common_boundary_area_ha"]),
+        }
+    missing_years = sorted(set(YEARS) - set(by_year))
+    if missing_years:
+        raise ValueError(f"common-support statistics omit years: {missing_years}")
 
     scenario = {}
-    plus_root = root / "runtime_plus_2026" / "outputs" / "plus"
+    # Reports accept only the current harmonized scenario contract.  Falling
+    # back to a dated legacy run would mix class meanings and support extents.
+    plus_root = root / "runtime_plus_harmonized_v2" / "outputs" / "plus_harmonized_v2"
+    invest_scenario_root = root / "outputs" / "invest_scenarios_harmonized_v2"
+    service_scenario_root = root / "outputs" / "ecosystem_service_scenarios_harmonized_v2" / "native_ND_UD_EP_RE"
+
+    def scenario_paths(code: str) -> tuple[Path, Path, Path, Path, Path]:
+        paths = (
+            plus_root / code / f"PLUS_{code}.tif",
+            invest_scenario_root / code / "carbon" / "2026" / "tot_c_cur.tif",
+            invest_scenario_root / code / "water" / "2026" / "output" / "per_pixel" / f"wyield_wy_2026_{code}.tif",
+            invest_scenario_root / code / "habitat_318_native" / "2026" / f"quality_c_hq_2026_{code}.tif",
+            service_scenario_root / f"ecosystem_service_2026_{code}.tif",
+        )
+        missing = [str(path) for path in paths if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(f"incomplete harmonized scenario output set for {code}: {missing}")
+        return paths
+
+    source_records = {}
     for code in SCENARIOS:
-        lulc = plus_root / code / f"PLUS_{code}.tif"
-        carbon = root / "outputs" / "invest" / "carbon_plus_20260807" / code / "2026" / "tot_c_cur.tif"
-        water = root / "outputs" / "invest" / "plus_20260807" / code / "water_yield_workspace" / "output" / "per_pixel" / f"wyield_wy_2026_{code}.tif"
-        habitat = root / "outputs" / "invest" / "plus_20260807" / code / f"quality_2026_{code}_30m.tif"
-        service = root / "outputs" / "invest" / "plus_20260807" / code / "ecosystem_service" / f"ecosystem_service_2026_{code}.tif"
+        lulc, carbon, water, habitat, service = scenario_paths(code)
         array, transform, crs = masked(lulc)
         values, counts = np.unique(array.compressed().astype(np.int16), return_counts=True)
         water_m3, water_mean = water_total(water)
@@ -133,7 +151,17 @@ def collect(root: Path) -> dict:
             "crs": str(crs),
             "pixel_size_m": abs(transform.a),
         }
-    return {"historical": by_year, "scenario_2026": scenario}
+        source_records[code] = {
+            "plus_lulc": str(lulc), "carbon": str(carbon), "water_yield": str(water),
+            "habitat_quality": str(habitat), "ecosystem_service": str(service),
+            "source_mtime": {name: path.stat().st_mtime for name, path in (
+                ("plus_lulc", lulc), ("carbon", carbon), ("water_yield", water),
+                ("habitat_quality", habitat), ("ecosystem_service", service),
+            )},
+        }
+    return {"historical": by_year, "scenario_2026": scenario,
+            "scenario_sources": source_records,
+            "scenario_source_policy": "harmonized v2 only; legacy scenario fallbacks are rejected"}
 
 
 def write_tables(out: Path, data: dict) -> None:

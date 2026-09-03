@@ -2,6 +2,14 @@
 
 This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
 
+## 0.5.0 - 2026-09-03
+
+- Added a strict six-class mining-area contract that keeps subsidence water and natural water separate across harmonization, transition statistics, Carbon, Annual Water Yield, Habitat Quality and scenario reporting.
+- Materialised the PLUS LEAS land-expansion raster and aligned driver stack before GUI execution. RE now derives and validates its separate 0/1 UInt8 development-zone mask from aligned subsidence depth. CARS validates non-empty class-potential layers, adopts completed vendor outputs without relaunching the GUI, records realised class demand and preserves independent ND/UD/EP/RE state.
+- Added native InVEST 3.18 scenario datastacks, common-validity support statistics and publication/report utilities using explicit units and provenance.
+- Replaced dated result-organising and deletion helpers with a plan-driven finalizer. It previews by default, constrains every path to the project root, protects declared raw-input roots and writes a final artifact manifest.
+- Expanded the Skill routing and documentation for safe final packaging, and removed one-off report patchers and generated repository artifacts.
+
 ## 0.4.2 - 2026-07-30
 
 - Added `project_readiness.py` and the local MCP `inspect_local_project_readiness` tool. They compile a project without opening commercial GIS software, inspect real spatial inputs, check dated ROI and independent validation tables, inventory input hashes, list planned stages and identify unavailable local software.

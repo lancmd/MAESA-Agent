@@ -167,22 +167,21 @@ def configured_installation() -> tuple[Path, Path, dict[str, Any]]:
 
 
 def pid_is_alive(pid: Any) -> bool:
+    """Return true only for the pinned PLUS executable, never a recycled PID.
+
+    Windows can reuse a just-closed PLUS PID for the elevated Python worker
+    that resumes the request.  A generic liveness probe then attaches the GUI
+    bridge to that worker instead of launching PLUS.  All callers here expect
+    the vendor GUI, so executable identity is part of the contract.
+    """
     if not isinstance(pid, int) or pid <= 0:
         return False
-    if os.name == "nt":
-        import ctypes
-        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not handle:
-            return False
-        try:
-            code = ctypes.c_ulong()
-            return bool(ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value == 259)
-        finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
     try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ValueError):
+        import psutil  # type: ignore
+        process = psutil.Process(pid)
+        _, executable, _ = configured_installation()
+        return Path(process.exe()).resolve() == executable.resolve()
+    except Exception:
         return False
 
 
@@ -229,12 +228,57 @@ def render_value(value: Any, context: dict[str, Any]) -> Any:
     return re.sub(r"\$\{([A-Za-z0-9_.-]+)\}", replacement, value)
 
 
-def request_context(envelope: dict[str, Any], scenario: str, workspace: Path, expected: Path) -> dict[str, Any]:
+def re_development_zone_input(core_driver_input: str) -> str:
+    """Return the discrete RE development-zone raster beside a depth raster.
+
+    PLUS CARS labels this picker ``Development Zone``.  It is a categorical
+    zone contract, not the continuous subsidence-depth surface used as a
+    driver.  Feeding the depth TIFF into this widget can make a RE run appear
+    to start while applying an invalid policy constraint.  Keep the two inputs
+    deliberately separate and fail before any GUI interaction if the prepared
+    0/1 UInt8 zone is unavailable or malformed.
+    """
+    core_path = Path(core_driver_input).expanduser().resolve()
+    zone_candidate = core_path.with_name("subsidence_zone_plus_uint8.tif")
+    if not zone_candidate.is_file():
+        raise GuiAutomationError(
+            "RE requires the prepared subsidence_zone_plus_uint8.tif development-zone raster; "
+            f"it was not found beside {core_path.name}"
+        )
+    try:
+        import numpy as np  # type: ignore
+        import rasterio  # type: ignore
+        with rasterio.open(zone_candidate) as raster:
+            if raster.count != 1 or raster.dtypes[0] != "uint8":
+                raise GuiAutomationError(
+                    "RE development zone must be a single-band UInt8 raster, "
+                    f"got {raster.count} band(s) and {raster.dtypes[0]}"
+                )
+            values = raster.read(1, masked=True)
+            codes = {int(value) for value in np.unique(values.compressed())}
+            if not codes or not codes.issubset({0, 1}) or 1 not in codes:
+                raise GuiAutomationError(
+                    "RE development zone must contain only 0/1 values and include the active (1) zone; "
+                    f"got {sorted(codes)}"
+                )
+    except GuiAutomationError:
+        raise
+    except Exception as error:
+        raise GuiAutomationError(
+            f"RE development-zone validation failed for {zone_candidate}: {error}"
+        ) from error
+    return str(zone_candidate)
+
+
+def request_context(envelope: dict[str, Any], scenario: str, workspace: Path, expected: Path,
+                    validate_generated_inputs: bool = True) -> dict[str, Any]:
     detail = envelope.get("parameters", {}).get("parameters", {})
     detail = detail if isinstance(detail, dict) else {}
     history = [str(item) for item in detail.get("historical_lulc", []) if isinstance(item, str)]
     drivers = detail.get("driver_factors", {}) if isinstance(detail.get("driver_factors"), dict) else {}
+    candidate_output = expected.with_name(expected.stem + "_candidate" + expected.suffix)
     context: dict[str, Any] = {"scenario": scenario, "workspace": str(workspace), "expected_output": str(expected),
+                               "expected_output_candidate": str(candidate_output),
                                "historical_lulc_count": len(history)}
     # LEAS receives a directory rather than one driver path.  The compiler
     # passes all aligned driver paths in ``driver_factors``; derive the common
@@ -273,6 +317,15 @@ def request_context(envelope: dict[str, Any], scenario: str, workspace: Path, ex
                                               f"land_expansion_{settings.get('baseline_year', 2025)}_{settings.get('target_year', 2026)}.tif")
     else:
         context["leas_expansion_input"] = ""
+    explicit_potential_folder = settings.get("leas_potential_folder")
+    if isinstance(explicit_potential_folder, str) and explicit_potential_folder:
+        potential_folder = Path(explicit_potential_folder).expanduser().resolve()
+        if not is_unc(str(potential_folder)) and potential_folder.is_dir():
+            context["leas_potential_folder"] = str(potential_folder)
+        else:
+            raise GuiAutomationError(f"PLUS LEAS potential folder does not exist: {potential_folder}")
+    else:
+        context["leas_potential_folder"] = str(workspace)
     # Land demand is passed as a per-scenario class mapping by the project
     # compiler.  Flatten it into explicit placeholders so one calibrated GUI
     # profile can be reused for ND/UD/EP/RE without editing screen coordinates
@@ -288,9 +341,13 @@ def request_context(envelope: dict[str, Any], scenario: str, workspace: Path, ex
             context[f"re_{key}"] = "" if value is None else value
     core_input = resource.get("core_driver_input")
     if isinstance(core_input, str) and core_input:
-        core_path = Path(core_input)
-        zone_candidate = core_path.with_name("subsidence_zone_plus_uint8.tif")
-        context["re_plus_zone_input"] = str(zone_candidate if zone_candidate.is_file() else core_path)
+        # Never silently fall back to the continuous depth driver.  The RE
+        # profile's Development Zone picker has a different data contract.
+        if validate_generated_inputs:
+            context["re_plus_zone_input"] = re_development_zone_input(core_input)
+        else:
+            context["re_plus_zone_input"] = str(
+                Path(core_input).expanduser().resolve().with_name("subsidence_zone_plus_uint8.tif"))
     return context
 
 
@@ -764,6 +821,7 @@ class PlusGui:
             raise GuiAutomationError(f"PLUS multi-file picker found fewer than two development-potential bands in {folder}")
         try:
             import rasterio  # type: ignore
+            import numpy as np  # type: ignore
             invalid = []
             for item in selected:
                 if item.stat().st_size <= 8:
@@ -772,6 +830,18 @@ class PlusGui:
                 with rasterio.open(item) as raster:
                     if raster.count != 1 or raster.width <= 0 or raster.height <= 0:
                         invalid.append(f"{item.name}:invalid-grid")
+                        continue
+                    # Every LEAS class-potential layer may contain NoData and
+                    # low values, but an all-zero layer is a vendor-side
+                    # regression failure rather than usable CARS evidence.
+                    # Reject it before CARS can turn an empty potential stack
+                    # into a superficially valid categorical prediction.
+                    values = raster.read(1)
+                    valid = np.isfinite(values)
+                    if raster.nodata is not None:
+                        valid &= values != raster.nodata
+                    if not np.any(valid) or not np.any(values[valid] != 0):
+                        invalid.append(f"{item.name}:all_zero_potential")
             if invalid:
                 raise GuiAutomationError("PLUS CARS received invalid LEAS bands: " + ", ".join(invalid))
         except GuiAutomationError:
@@ -860,6 +930,76 @@ class PlusGui:
             raise GuiAutomationError(f"PLUS multi-file picker found fewer than two development-potential bands in {folder}")
         return {"route": "pywinauto_file_dialog_multiselect", "directory": str(folder), "selected": len(selected)}
 
+    def _file_dialog(self):
+        """Return the active Windows file picker, including a shell-hosted one.
+
+        The native dialog started from an elevated Qt application can be
+        owned by Explorer rather than by the PLUS PID.  Restricting the search
+        to ``windows(process=self.process_id)`` makes a real visible picker
+        appear missing and loses the selected input.  Search the PLUS windows
+        first, then all visible desktop windows, while accepting the localised
+        and ``Open images...`` titles used by the vendor build.
+        """
+        candidates: list[Any] = []
+        try:
+            candidates.extend(self.desktop.windows(process=self.process_id))
+        except Exception:
+            pass
+        try:
+            for candidate in self.desktop.windows():
+                if candidate not in candidates and candidate.is_visible():
+                    candidates.append(candidate)
+        except Exception:
+            pass
+        prefixes = ("pick", "open", "打开", "选择", "choose")
+        for candidate in candidates:
+            try:
+                descendants = [candidate, *candidate.descendants()]
+            except Exception:
+                descendants = [candidate]
+            for item in descendants:
+                try:
+                    title = item.window_text().strip().lower()
+                    if title.startswith(prefixes) and item.is_visible():
+                        return item
+                except Exception:
+                    continue
+        raise GuiAutomationError("PLUS file picker did not open")
+
+    def select_single_file(self, target: dict[str, Any], value: str) -> dict[str, Any]:
+        """Commit one existing raster through the native Windows picker.
+
+        A generic ``set_text`` followed by a generic click can select a
+        similarly-named Qt control behind the file dialog.  This route finds
+        the dialog and its real Open split button explicitly, which is needed
+        for LEAS's one-file expansion input.
+        """
+        candidate = Path(value).expanduser().resolve()
+        if is_unc(str(candidate)) or not candidate.is_file():
+            raise GuiAutomationError(f"PLUS single-file picker input does not exist: {candidate}")
+        self.click(target)
+        time.sleep(0.5)
+        try:
+            dialog = self._file_dialog()
+            edit = next(item for item in dialog.descendants()
+                        if item.automation_id() == "1148" and item.element_info.control_type == "Edit")
+            edit.set_edit_text(str(candidate))
+            edit.set_focus()
+            open_button = next(item for item in dialog.descendants()
+                               if item.automation_id() == "1" and item.element_info.control_type == "SplitButton")
+            rectangle = open_button.rectangle()
+            open_button.click_input(coords=(min(30, max(8, rectangle.width() // 3)),
+                                            max(1, rectangle.height() // 2)))
+        except Exception as error:
+            raise GuiAutomationError(f"PLUS single-file picker failed: {error}") from error
+        # The vendor's picker may leave an accessibility-only shell window
+        # alive after it has already committed the selected row to LEAS.  Its
+        # presence is not evidence that the selection failed; subsequent LEAS
+        # controls are the authoritative contract.  Returning here lets the
+        # following feature-folder and parameter actions verify that contract
+        # instead of falsely aborting a successful selection.
+        return {"route": "pywinauto_file_dialog_single", "file": str(candidate)}
+
     def select_directory(self, target: dict[str, Any], directory: str) -> dict[str, Any]:
         """Use the vendor browse button to commit a directory value.
 
@@ -871,52 +1011,61 @@ class PlusGui:
         folder = Path(directory).expanduser().resolve()
         if is_unc(str(folder)) or not folder.is_dir():
             raise GuiAutomationError(f"PLUS LEAS feature directory does not exist: {folder}")
-        self.click(target)
-        time.sleep(0.5)
-        screen_error: Exception | None = None
         try:
-            from pywinauto.keyboard import send_keys  # type: ignore
-            import win32clipboard  # type: ignore
-            self.click_screen([900, 585])
-            win32clipboard.OpenClipboard()
+            # A retry may already have the native picker open.  Reuse that
+            # modal dialog instead of clicking the hidden LEAS browse button
+            # through it and opening a second picker.
             try:
-                win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardText(str(folder))
-            finally:
-                win32clipboard.CloseClipboard()
-            send_keys("^a^v")
-            self.click_screen([1160, 615])
-            time.sleep(0.8)
-            return {"route": "calibrated_screen_directory_dialog", "directory": str(folder)}
-        except Exception as error:
-            screen_error = error
-        try:
-            dialog = next(item for window in self.desktop.windows(process=self.process_id)
-                          for item in window.descendants()
-                          if item.window_text().startswith(("Pick", "Open", "choose", "选择", "鎵撳紑")))
-        except StopIteration as error:
-            detail = f"; screen fallback: {screen_error!r}" if screen_error else ""
-            raise GuiAutomationError("PLUS LEAS directory picker did not open" + detail) from error
-        try:
-            edit = next(item for item in dialog.descendants()
-                        if item.automation_id() == "1148" and item.element_info.control_type == "Edit")
+                dialog = self._file_dialog()
+            except GuiAutomationError:
+                self.click(target)
+                time.sleep(0.5)
+                dialog = self._file_dialog()
+            descendants = list(dialog.descendants())
+            edit = next((item for item in descendants
+                         if item.automation_id() == "1148" and item.element_info.control_type == "Edit"), None)
+            if edit is None:
+                folder_combo = next((item for item in descendants
+                                    if item.element_info.control_type == "ComboBox"
+                                    and any(token in item.window_text().lower() for token in ("folder", "文件夹", "資料夾"))), None)
+                if folder_combo is not None:
+                    edit = next((item for item in folder_combo.descendants()
+                                 if item.element_info.control_type == "Edit"), None)
+            if edit is None:
+                # ``choose src Directory`` exposes a dedicated folder field
+                # without an AutomationId.  The last non-search edit in its
+                # visual tree is that bottom field; retain this localised Qt
+                # fallback rather than a screen coordinate.
+                edits = [item for item in descendants
+                         if item.element_info.control_type == "Edit"
+                         and item.automation_id() != "SearchEditBox"]
+                edit = edits[-1] if edits else None
+            if edit is None:
+                raise GuiAutomationError("PLUS LEAS directory picker has no editable folder field")
             edit.set_edit_text(str(folder))
             edit.set_focus()
-            from pywinauto.keyboard import send_keys  # type: ignore
-            send_keys("{ENTER}")
+            buttons = [item for item in descendants
+                       if item.element_info.control_type in {"Button", "SplitButton"}]
+            accept_titles = {"select folder", "choose folder", "选择文件夹", "选择資料夾", "open", "打开", "打开(o)"}
+            accept = next((item for item in buttons if item.window_text().strip().lower() in accept_titles), None)
+            if accept is None:
+                accept = next((item for item in buttons if item.automation_id() == "1"), None)
+            if accept is None:
+                raise GuiAutomationError("PLUS LEAS directory picker has no accept button")
+            rectangle = accept.rectangle()
+            if accept.element_info.control_type == "SplitButton":
+                accept.click_input(coords=(min(30, max(8, rectangle.width() // 3)),
+                                           max(1, rectangle.height() // 2)))
+            else:
+                accept.click_input()
         except Exception as error:
-            detail = f"; screen fallback: {screen_error!r}" if screen_error else ""
-            raise GuiAutomationError(f"PLUS LEAS directory picker navigation failed: {error!r}{detail}") from error
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            try:
-                if not any(item.window_text().startswith(("Pick", "Open", "choose", "选择", "鎵撳紑"))
-                           for window in self.desktop.windows(process=self.process_id)
-                           for item in window.descendants()):
-                    break
-            except Exception:
-                break
-            time.sleep(0.2)
+            raise GuiAutomationError(f"PLUS LEAS directory picker navigation failed: {error!r}") from error
+        # The Qt application updates its feature table synchronously after
+        # the native accept click.  Some Windows builds retain an invisible
+        # accessibility shell window afterwards, so waiting for *all* picker
+        # objects to disappear can turn a successful directory selection into
+        # a false failure.  The subsequent LEAS run validates the generated
+        # potential rasters and is the meaningful acceptance boundary.
         return {"route": "pywinauto_file_dialog_directory", "directory": str(folder)}
 
     def select(self, target: dict[str, Any], value: str) -> dict[str, Any]:
@@ -1109,6 +1258,8 @@ def execute_steps(gui: PlusGui, steps: list[dict[str, Any]], context: dict[str, 
                                  commit=bool(step.get("commit", False)))
         elif action == "select_files":
             event = gui.select_files_clean(target, str(render_value(step.get("directory", step.get("value", "")), context)))
+        elif action == "select_file":
+            event = gui.select_single_file(target, str(render_value(step.get("value", ""), context)))
         elif action == "select_directory":
             event = gui.select_directory(target, str(render_value(step.get("directory", step.get("value", "")), context)))
         elif action == "select":
@@ -1315,7 +1466,8 @@ def adopt_vendor_output(expected: Path, scenario: str) -> Path | None:
     copy the newest native export beside it and retain the native file for
     provenance.
     """
-    candidates = sorted(expected.parent.glob(f"PLUS_{scenario}Simulation_*.tif"),
+    candidates = sorted((item for item in expected.parent.glob(f"PLUS_{scenario}*Simulation_*.tif")
+                         if not item.with_suffix(item.suffix + ".invalid.json").is_file()),
                         key=lambda item: item.stat().st_mtime, reverse=True)
     if not candidates:
         return None
@@ -1325,6 +1477,33 @@ def adopt_vendor_output(expected: Path, scenario: str) -> Path | None:
     import shutil
     shutil.copy2(source, expected)
     return source
+
+
+def has_stable_export_artifact(envelope: dict[str, Any]) -> bool:
+    """Return true when a completed GUI export can be resumed without UAC.
+
+    The elevated worker is required to drive the vendor Qt application, but
+    adopting and validating an already-written GeoTIFF is read-only.  Calling
+    ``plus.run_scenario`` again after CARS finishes used to trigger a second
+    UAC worker and could remain blocked on the secure desktop.  Detect both
+    the bridge contract file and PLUS's native ``*Simulation_*.tif`` export so
+    the normal process can finish the hand-off locally.
+    """
+    try:
+        scenario, workspace, expected, _, _ = scenario_paths(envelope)
+    except Exception:
+        return False
+    paths = [expected, *workspace.glob(f"PLUS_{scenario}*Simulation_*.tif")]
+    stable_seconds = max(0.0, float(os.getenv("MINING_PLUS_OUTPUT_STABLE_SECONDS", "5")))
+    for path in paths:
+        try:
+            if path.is_file() and path.stat().st_size > 8:
+                age = max(0.0, time.time() - path.stat().st_mtime)
+                if age >= stable_seconds:
+                    return True
+        except OSError:
+            continue
+    return False
 
 
 def initial_state(scenario: str, expected: Path, identity: dict[str, Any], profile_file: Path | None,
@@ -1349,7 +1528,8 @@ def write_request(envelope: dict[str, Any], identity: dict[str, Any], dry_run: b
     # safely be reused after an interruption.
     state.update({"expected_output": str(expected), "profile": str(profile_file) if profile_file else None,
                   "requested_profile_sha256": digest, "dry_run": dry_run, "request_file": str(request),
-                  "input_files": [str(item) for item in request_context(envelope, scenario, workspace, expected).values()
+                  "input_files": [str(item) for item in request_context(
+                      envelope, scenario, workspace, expected, validate_generated_inputs=not dry_run).values()
                                   if isinstance(item, str) and item and item != str(expected)]})
     write_json(request, {"bridge": BRIDGE_NAME, "software": SOFTWARE_NAME, "scenario": scenario,
                          "request": envelope, "expected_output": str(expected), "identity": identity,
@@ -1601,8 +1781,14 @@ def handle(envelope: dict[str, Any], *, elevated: bool) -> dict[str, Any]:
         return response(envelope, "failed", error="unsupported protocol version")
     operation = envelope.get("operation")
     dry_run = bool(envelope.get("parameters", {}).get("dry_run", False))
+    # A second invocation after CARS has exported its native GeoTIFF only
+    # adopts/validates that file.  Do not send this read-only resume through a
+    # fresh UAC worker; the GUI-driving invocation above already crossed that
+    # boundary and the worker can otherwise wait indefinitely on the secure
+    # desktop.
+    resume_after_export = operation == "plus.run_scenario" and has_stable_export_artifact(envelope)
     if (not elevated and requires_elevation() and operation in {"plus.calibrate", "plus.run_scenario"}
-            and not (operation == "plus.run_scenario" and dry_run)):
+            and not (operation == "plus.run_scenario" and (dry_run or resume_after_export))):
         return elevated_worker(envelope)
     if operation == "system.capabilities":
         return capabilities(envelope)

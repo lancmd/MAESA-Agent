@@ -106,6 +106,19 @@ python .\scripts\build_ecosystem_service_report.py --root C:\path\to\project
 
 该报告脚本会把可验证的统计、三线表、图件、待验证项和结果边界写入 DOCX；它不会用参考论文中的示例数值替代本项目结果。
 
+## 最终成果归档
+
+使用显式计划把最终图件、报告、PLUS/InVEST 原生产出和运行清单汇总到一个目录。命令默认只显示将要移动、复制和清理的路径：
+
+```powershell
+Copy-Item .\templates\final_results_plan.example.json .\final_results_plan.json
+python .\scripts\finalize_project_results.py --project-root C:\path\to\project --plan .\final_results_plan.json
+python .\scripts\finalize_project_results.py --project-root C:\path\to\project --plan .\final_results_plan.json --apply
+```
+
+归档器拒绝清理计划中声明的影像、ROI、验证样本、驱动因子、边界、沉陷和 InVEST 输入。详细说明见 [`docs/results.md`](docs/results.md)。
+通过 MCP 使用时，`finalize_project_results` 同样默认 `apply=false`。
+
 ## 测试
 
 ```powershell
@@ -121,7 +134,7 @@ GitHub Actions 运行跨平台的 Python 合同测试。ArcGIS Pro、ENVI、PLUS
 ```text
 MAESA-Agent/
 ├── config/              # 本地路径、分类体系和数据源示例
-├── docs/                # 项目、分类、空间、PLUS、InVEST 与运行文档
+├── docs/                # 项目、分类、空间、模型运行与成果归档文档
 ├── interfaces/          # 本地 MCP 后端与工具协议
 ├── mcp_server/          # 可安装的 MCP 包
 ├── scripts/             # 编译、桥接、统计、制图和报告脚本

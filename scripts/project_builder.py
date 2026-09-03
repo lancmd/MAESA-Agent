@@ -191,8 +191,8 @@ def build(project_file: Path, project_id: str, workspace: str, imagery_periods: 
         raise ValueError("ecosystem_service_only requires ecosystem_criteria and ecosystem_config")
     if task_type == "mapping_only" and not isinstance(gis_outputs, dict):
         raise ValueError("mapping_only requires a gis_outputs object")
-    if scheme not in {"standard_6class", "high_water_coal_7class"}:
-        raise ValueError("scheme must be standard_6class or high_water_coal_7class")
+    if scheme not in {"standard_6class", "mining_water_6class", "high_water_coal_7class"}:
+        raise ValueError("scheme must be standard_6class, mining_water_6class, or high_water_coal_7class")
     native_patch_model = bool(model_package and (Path(model_package).expanduser() / "model" / "model.json").is_file())
     if native_patch_model and scheme == "high_water_coal_7class":
         # This model has one water class, so high-water seven-class output would be false precision.

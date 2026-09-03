@@ -47,6 +47,10 @@ LABELS = {
     7: "裸地/工矿用地",
 }
 BASE_TO_ENHANCED = {1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7}
+MAESA_SIX_LABELS = {
+    1: "沉陷积水", 2: "自然水体", 3: "建设用地",
+    4: "耕地", 5: "林地", 6: "草地",
+}
 
 
 def read_raster(path: Path) -> tuple[np.ndarray, dict[str, Any]]:
@@ -154,6 +158,21 @@ def normalize_counts(values: dict[int, float], total: int) -> dict[int, int]:
     return result
 
 
+def normalize_for_codes(values: dict[int, float], total: int, codes: dict[int, str]) -> dict[int, int]:
+    """Largest-remainder allocation for an explicitly declared code contract."""
+    clipped = {code: max(0.0, float(values.get(code, 0.0))) for code in codes}
+    raw_total = sum(clipped.values())
+    if raw_total <= 0:
+        return {code: 0 for code in codes}
+    scaled = {code: clipped[code] * total / raw_total for code in codes}
+    result = {code: int(math.floor(scaled[code])) for code in codes}
+    remaining = int(total - sum(result.values()))
+    order = sorted(codes, key=lambda code: (scaled[code] - result[code], code), reverse=True)
+    for code in order[:remaining]:
+        result[code] += 1
+    return result
+
+
 def write_raster(path: Path, data: np.ndarray, profile: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     output_profile = profile.copy()
@@ -195,15 +214,170 @@ def maybe_update_project(project: Path, demand: dict[str, dict[str, int]], outpu
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def write_maesa_six_project(template: Path, demand: dict[str, dict[str, int]], output_path: Path,
+                            classification: Path) -> Path:
+    """Create a PLUS project that cannot silently reuse the legacy water code."""
+    payload = json.loads(template.read_text(encoding="utf-8"))
+    paths = [classification / f"LULC_{year}_30m_masked.tif" for year in (2005, 2010, 2015, 2020, 2025)]
+    missing = [str(path) for path in paths if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("Missing harmonized LULC file(s): " + "; ".join(missing))
+    payload["project_id"] = "wanbei_six_cities_plus_2026_harmonized_v2"
+    payload["workspace"] = "runtime_plus_harmonized_v2"
+    payload.setdefault("classification", {})["scheme"] = "mining_water_6class"
+    security = payload.setdefault("security", {})
+    roots = security.setdefault("input_roots", [])
+    canonical_root = str(classification)
+    if canonical_root not in roots:
+        roots.append(canonical_root)
+    inputs = payload.setdefault("inputs", {})
+    inputs["historical_lulc"] = [str(path) for path in paths]
+    inputs["historical_lulc_periods"] = [
+        {"year": year, "path": str(classification / f"LULC_{year}_30m_masked.tif")}
+        for year in (2005, 2010, 2015, 2020, 2025)
+    ]
+    inputs["lulc_baseline"] = str(paths[-1])
+    plus = payload.setdefault("plus", {})
+    plus["land_demand"] = demand
+    plus["land_demand_source"] = str(output_path)
+    plus["demand_status"] = "pending_PLUS_calibration"
+    plus["demand_note"] = (
+        "Harmonized MAESA six-class demand. Code 1 is subsidence water and code 2 is natural water; "
+        "calibrate PLUS transition rules with this exact mapping before any scenario output is accepted."
+    )
+    plus["output_workspace"] = "outputs/plus_harmonized_v2"
+    out = template.with_name("project_plus_2026_harmonized_v2.json")
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return out
+
+
+def canonical_six_re_evidence(base: np.ndarray, depth: np.ndarray, workface: np.ndarray,
+                               threshold_m: float) -> np.ndarray:
+    """Apply 2026 mining evidence while retaining the canonical MAESA codes."""
+    output = base.copy()
+    # Existing construction land is not converted merely because a workface
+    # overlaps it.  Natural water may become a mining-influenced accumulation
+    # where the 2026 depth and workface evidence jointly support that reading.
+    candidate = workface & np.isfinite(depth) & (depth >= threshold_m) & np.isin(base, (1, 2, 4, 5, 6))
+    output[candidate] = 1
+    return output
+
+
+def run_maesa_six_contract(root: Path, out_dir: Path, args: argparse.Namespace) -> int:
+    """Prepare demand inputs without misreading MAESA's six canonical codes.
+
+    The legacy PLUS project used a standard six-class mapping where code 1
+    meant undifferentiated water.  MAESA's final contract uses code 1 for
+    subsidence water and code 2 for natural water, so that legacy mapping must
+    never be applied to the harmonized series.
+    """
+    if args.classification_dir is None:
+        raise ValueError("--classification-dir is required with --class-contract maesa_six")
+    classification = args.classification_dir.expanduser().resolve()
+    path_2020 = classification / "LULC_2020_30m_masked.tif"
+    path_2025 = classification / "LULC_2025_30m_masked.tif"
+    base, profile = read_raster(path_2025)
+    before, before_profile = read_raster(path_2020)
+    if profile["width"] != 3570 or profile["height"] != 6460 or str(profile["crs"]) != "EPSG:32650":
+        raise ValueError("the supplied 2025 LULC is not the expected EPSG:32650 30 m master grid")
+    if before.shape != base.shape or before_profile["transform"] != profile["transform"] or before_profile["crs"] != profile["crs"]:
+        raise ValueError("2020 and 2025 MAESA LULC must share the fixed analysis grid")
+    unexpected = sorted(set(np.unique(base)) - {0, *MAESA_SIX_LABELS})
+    if unexpected:
+        raise ValueError(f"2025 MAESA LULC contains unsupported codes: {unexpected}")
+
+    depth_2025 = reproject_depth(root / "subsidence" / "aligned" / "subsidence_depth_2025_positive_down_30m_utm50n.tif", profile)
+    depth_2026 = reproject_depth(root / "subsidence" / "aligned" / "subsidence_depth_2026_positive_down_30m_utm50n.tif", profile)
+    wf_2025 = workface_mask(root / "boundaries" / "workface_2025.shp", profile)
+    wf_2026 = workface_mask(root / "boundaries" / "workface_2026.shp", profile)
+    baseline = canonical_six_re_evidence(base, depth_2025, wf_2025, args.threshold_m)
+    re_evidence = canonical_six_re_evidence(base, depth_2026, wf_2026, args.threshold_m)
+    evidence_dir = out_dir / "统一六类基准与沉陷证据"
+    write_raster(evidence_dir / "LULC_2025_统一六类_30m.tif", baseline, profile)
+    write_raster(evidence_dir / "LULC_2026_RE沉陷证据_统一六类_30m.tif", re_evidence, profile)
+
+    c20 = {code: int(np.count_nonzero(before == code)) for code in MAESA_SIX_LABELS}
+    c25 = {code: int(np.count_nonzero(baseline == code)) for code in MAESA_SIX_LABELS}
+    total_cells = sum(c25.values())
+    nd_values = {code: max(0.05 * c25[code], float(c25[code] + (c25[code] - c20[code]))) for code in MAESA_SIX_LABELS}
+    demands: dict[str, dict[int, int]] = {"ND": normalize_for_codes(nd_values, total_cells, MAESA_SIX_LABELS)}
+    factors = {
+        "UD": {3: 1.20, 4: 0.95, 5: 0.95, 6: 0.95},
+        "EP": {3: 0.70, 4: 0.85, 5: 1.10, 6: 1.10},
+        "RE": {1: 1.30, 3: 1.20, 4: 0.95, 5: 0.95, 6: 0.95},
+    }
+    candidate_sink = int(np.count_nonzero(wf_2026 & np.isfinite(depth_2026) & (depth_2026 >= args.threshold_m)))
+    for scenario, multipliers in factors.items():
+        values = {code: float(demands["ND"][code]) for code in MAESA_SIX_LABELS}
+        if scenario == "RE":
+            values[1] = max(values[1], float(candidate_sink))
+        for code, factor in multipliers.items():
+            values[code] *= factor
+        demands[scenario] = normalize_for_codes(values, total_cells, MAESA_SIX_LABELS)
+
+    rules = {
+        "ND": "2020—2025年共同统计边界内的本地趋势外推",
+        "UD": "建设用地需求系数1.20，耕地、林地、草地需求系数0.95",
+        "EP": "建设用地0.70，耕地0.85，林地、草地1.10",
+        "RE": "2026年工作面与沉陷深度证据；沉陷积水1.30，建设用地1.20，植被类0.95",
+    }
+    rows: list[dict[str, Any]] = []
+    for scenario in SCENARIOS:
+        for code, name in MAESA_SIX_LABELS.items():
+            rows.append({"scenario": scenario, "lucode": code, "landuse": name,
+                         "target_pixels": demands[scenario][code],
+                         "target_area_ha": f"{demands[scenario][code] * 0.09:.4f}",
+                         "rule": rules[scenario], "source": "harmonized_2020_2025_trend+paper_relative_controls",
+                         "status": "pending_PLUS_calibration"})
+    demand_csv = out_dir / "2026四情景土地利用需求_统一六类.csv"
+    write_csv(demand_csv, rows)
+    write_csv(out_dir / "统一六类编码表.csv", [
+        {"lucode": code, "landuse": name, "definition": "MAESA final canonical class"}
+        for code, name in MAESA_SIX_LABELS.items()
+    ])
+    manifest = {
+        "status": "pending_PLUS_calibration",
+        "class_contract": "maesa_subsidence_water_6class",
+        "classification_directory": str(classification),
+        "master_grid": {"crs": str(profile["crs"]), "width": profile["width"], "height": profile["height"], "cell_area_ha": 0.09},
+        "base_period_counts": {"2020": c20, "2025": c25},
+        "evidence": {"subsidence_threshold_m": args.threshold_m, "candidate_sink_cells_2026": candidate_sink,
+                     "depth_2026": str(root / "subsidence" / "aligned" / "subsidence_depth_2026_positive_down_30m_utm50n.tif"),
+                     "workface_2026": str(root / "boundaries" / "workface_2026.shp")},
+        "class_labels": MAESA_SIX_LABELS,
+        "demands": {scenario: {str(code): count for code, count in values.items()} for scenario, values in demands.items()},
+        "required_next_step": "calibrate PLUS with this exact canonical code order; do not reuse legacy-standard PLUS outputs",
+    }
+    (out_dir / "scenario_demand_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if args.update_project:
+        maybe_update_project(args.update_project.expanduser().resolve(), load_demand(demand_csv), demand_csv)
+    generated_project = None
+    if args.write_maesa_project:
+        generated_project = write_maesa_six_project(
+            args.write_maesa_project.expanduser().resolve(), load_demand(demand_csv), demand_csv, classification
+        )
+    print(json.dumps({"out_dir": str(out_dir), "status": manifest["status"], "demands": manifest["demands"],
+                      "project": str(generated_project) if generated_project else None}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True, help="wanbei_six_cities data root")
     parser.add_argument("--out-dir", type=Path, default=None)
     parser.add_argument("--update-project", type=Path, default=None)
     parser.add_argument("--threshold-m", type=float, default=0.3)
+    parser.add_argument("--class-contract", choices=("legacy_standard", "maesa_six"), default="legacy_standard",
+                        help="Use maesa_six for the final six classes with separate subsidence and natural water.")
+    parser.add_argument("--classification-dir", type=Path,
+                        help="Directory containing LULC_2020/2025_30m_masked.tif; required for maesa_six.")
+    parser.add_argument("--write-maesa-project", type=Path,
+                        help="Create a corrected PLUS project from this legacy project template (maesa_six only).")
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
-    out_dir = (args.out_dir or root / "outputs" / "plus_scenario_demand_20260806").expanduser().resolve()
+    out_dir = (args.out_dir or root / "outputs" / "plus_scenario_demand").expanduser().resolve()
+    if args.class_contract == "maesa_six":
+        return run_maesa_six_contract(root, out_dir, args)
     base_profile_path = root / "outputs" / "classification" / "final_grid_v3" / "LULC_2025_30m_masked.tif"
     base, profile = read_raster(base_profile_path)
     if profile["width"] != 3570 or profile["height"] != 6460 or str(profile["crs"]) != "EPSG:32650":

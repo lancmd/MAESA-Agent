@@ -205,6 +205,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     output = args.output.expanduser().resolve()
     if not stack_path.is_file() or not executable.is_file():
         raise ValueError("datastack and invest executable must be existing local files")
+    # InVEST 3.12 and newer Workbench CLIs use different sensitivity-table
+    # headers and command forms.  Choosing automatically prevents a 3.12
+    # process from receiving a 3.18 ``lucode`` table, which otherwise fails
+    # only after temporary tiles have already been created.
+    profile = args.invest_cli_profile
+    if profile == "auto":
+        probe = subprocess.run([str(executable), "--version"], stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                               errors="replace", check=False)
+        profile = "legacy_3_12" if "3.12" in (probe.stdout or "") else "modern_3_18"
+    args.invest_cli_profile = profile
     stack = load_json(stack_path)
     source_grid = Path(str(stack.get("args", {}).get("lulc_cur_path", ""))).expanduser().resolve()
     if not source_grid.is_file():
@@ -301,8 +312,8 @@ def main() -> int:
     parser.add_argument("--buffer-m", type=float, default=3000.0)
     parser.add_argument("--required-buffer-m", type=float, default=3000.0)
     parser.add_argument("--timeout-seconds", type=float, default=1800.0)
-    parser.add_argument("--invest-cli-profile", choices=("legacy_3_12", "modern_3_18"), default="modern_3_18",
-                        help="Use modern_3_18 for the installed Workbench CLI; legacy_3_12 retains old input headers.")
+    parser.add_argument("--invest-cli-profile", choices=("auto", "legacy_3_12", "modern_3_18"), default="auto",
+                        help="Use auto to detect the installed InVEST generation; legacy_3_12 retains old input headers.")
     parser.add_argument("--resume", action="store_true", help="Continue a prior tiled run, retaining tiles recorded as completed.")
     parsed = parser.parse_args()
     print(json.dumps(run(parsed), ensure_ascii=False, indent=2))

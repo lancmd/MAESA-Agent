@@ -10,6 +10,7 @@ from pathlib import Path
 
 LULC = {
     "standard_6class": [(1, "Water", "#2b83ba"), (2, "Built-up", "#d7191c"), (3, "Cropland", "#fdae61"), (4, "Forest", "#1a9641"), (5, "Grassland", "#a6d96a"), (6, "Bare/mining", "#8c510a")],
+    "mining_water_6class": [(1, "Subsidence water", "#225ea8"), (2, "Natural water", "#41b6c4"), (3, "Built-up", "#d73027"), (4, "Cropland", "#fdae61"), (5, "Forest", "#1a9850"), (6, "Grassland", "#a6d96a")],
     "subsidence_water_6class": [(1, "Subsidence water", "#225ea8"), (2, "Natural water", "#41b6c4"), (3, "Built-up", "#d73027"), (4, "Cropland", "#fdae61"), (5, "Forest", "#1a9850"), (6, "Grassland", "#a6d96a")],
     "high_water_coal_7class": [(1, "Subsidence water", "#225ea8"), (2, "Natural water", "#41b6c4"), (3, "Built-up", "#d73027"), (4, "Cropland", "#fdae61"), (5, "Forest", "#1a9850"), (6, "Grassland", "#a6d96a"), (7, "Bare/mining", "#8c510a")],
 }

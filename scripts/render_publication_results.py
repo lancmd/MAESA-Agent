@@ -7,6 +7,7 @@ contract; continuous products share a stable colour scale within each product.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import math
@@ -27,8 +28,8 @@ import rasterio
 from rasterio.warp import transform as rio_transform
 
 
-ROOT = Path(r"C:/Users/master/Desktop/wanbei_six_cities")
-RESULT = ROOT / "结果_重绘"
+ROOT = Path.cwd()
+RESULT = ROOT / "results"
 YEARS = [2005, 2010, 2015, 2020, 2025]
 SCENARIOS = ["ND", "UD", "EP", "RE"]
 
@@ -76,24 +77,22 @@ def ensure_dirs() -> None:
 def source_rasters(kind: str, scenario: str | None = None) -> dict[int, Path]:
     if scenario:
         if kind == "lulc":
-            base = ROOT / "outputs" / "plus_2026" / scenario / f"PLUS_{scenario}.tif"
-            if not base.exists():
-                base = ROOT / "runtime_plus_2026" / "outputs" / "plus" / scenario / f"PLUS_{scenario}.tif"
+            base = ROOT / "runtime_plus_harmonized_v2" / "outputs" / "plus_harmonized_v2" / scenario / f"PLUS_{scenario}.tif"
         elif kind == "carbon":
-            base = ROOT / "outputs" / "invest" / "carbon_plus_20260807" / scenario / "2026" / "tot_c_cur.tif"
+            base = ROOT / "outputs" / "invest_scenarios_harmonized_v2" / scenario / "carbon" / "2026" / "tot_c_cur.tif"
         elif kind == "water_yield":
-            base = ROOT / "outputs" / "invest" / "plus_20260807" / scenario / "water_yield_workspace" / "output" / "per_pixel" / f"wyield_wy_2026_{scenario}.tif"
+            base = ROOT / "outputs" / "invest_scenarios_harmonized_v2" / scenario / "water" / "2026" / "output" / "per_pixel" / f"wyield_wy_2026_{scenario}.tif"
         elif kind == "habitat_quality":
-            base = ROOT / "outputs" / "invest" / "plus_20260807" / scenario / f"quality_2026_{scenario}_30m.tif"
+            base = ROOT / "outputs" / "invest_scenarios_harmonized_v2" / scenario / "habitat_318_native" / "2026" / f"quality_c_hq_2026_{scenario}.tif"
         else:
-            base = ROOT / "outputs" / "invest" / "plus_20260807" / scenario / "ecosystem_service" / f"ecosystem_service_2026_{scenario}.tif"
+            base = ROOT / "outputs" / "ecosystem_service_scenarios_harmonized_v2" / "native_ND_UD_EP_RE" / f"ecosystem_service_2026_{scenario}.tif"
         return {2026: base}
     mapping = {
-        "lulc": ROOT / "outputs" / "classification" / "final_grid_v3",
-        "carbon": ROOT / "outputs" / "invest" / "carbon_series_20260805",
-        "water_yield": ROOT / "outputs" / "invest" / "water_yield_20260805",
-        "habitat_quality": ROOT / "outputs" / "invest" / "habitat_quality_tiled_318_v2",
-        "ecosystem_service": ROOT / "outputs" / "ecosystem_service_paper_20260806",
+        "lulc": ROOT / "outputs" / "statistics_harmonized_v2_common_support" / "lulc",
+        "carbon": ROOT / "outputs" / "invest" / "carbon_series_harmonized_v2",
+        "water_yield": ROOT / "outputs" / "invest" / "water_yield_harmonized_v2",
+        "habitat_quality": ROOT / "outputs" / "invest" / "habitat_quality_318_native_harmonized_v2c",
+        "ecosystem_service": ROOT / "outputs" / "ecosystem_service_harmonized_v2_native_habitat",
     }
     out: dict[int, Path] = {}
     base = mapping[kind]
@@ -105,7 +104,13 @@ def source_rasters(kind: str, scenario: str | None = None) -> dict[int, Path]:
         elif kind == "water_yield":
             p = base / str(year) / "output" / "per_pixel" / f"wyield_wy_{year}.tif"
         elif kind == "habitat_quality":
+            # Native InVEST 3.18 outputs use ``quality_c_hq_<year>.tif``;
+            # older harmonised runs used ``quality_<year>_30m.tif``.  Accept
+            # both contracts so a completed rerun is not mistaken for a
+            # missing raster.
             p = base / str(year) / f"quality_{year}_30m.tif"
+            if not p.exists():
+                p = base / str(year) / f"quality_c_hq_{year}.tif"
         else:
             p = base / f"ecosystem_service_{year}.tif"
         if p.exists():
@@ -462,8 +467,14 @@ def render_maps():
                         a = a / pixel_area_ha
                     a = a.compressed()
                     vals.append(a[np.isfinite(a)][:: max(1, a.size // 200000)])
-            allv = np.concatenate(vals)
-            common = Normalize(float(np.nanpercentile(allv, 2)), float(np.nanpercentile(allv, 98)))
+            # A partially completed rerun may legitimately have no valid
+            # historical rasters for one product.  Do not abort the complete
+            # publication build in that case; each available map will use its
+            # own robust range and the missing product is reported below.
+            vals = [v for v in vals if v.size]
+            if vals:
+                allv = np.concatenate(vals)
+                common = Normalize(float(np.nanpercentile(allv, 2)), float(np.nanpercentile(allv, 98)))
         for y, p in srcs.items():
             name = f"{y}_{kind}"
             map_figure(p, kind, titles[kind](y), out_dirs[kind] / "\u5386\u53f2\u65f6\u671f" / str(y) / name,
@@ -750,6 +761,13 @@ def profile_and_figures():
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--result", type=Path)
+    args = parser.parse_args()
+    global ROOT, RESULT
+    ROOT = args.root.expanduser().resolve()
+    RESULT = (args.result or ROOT / "results").expanduser().resolve()
     ensure_dirs(); render_maps(); write_transition_outputs(); write_long_transition_output(); write_sankey_outputs(); panel_service_distribution(); profile_and_figures()
     print("rendered publication maps, matrices, Sankey, spatiotemporal panel and SciPilot figures")
 

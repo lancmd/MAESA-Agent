@@ -1,0 +1,41 @@
+{
+  "output_dir": "final_results",
+  "preserve": [
+    "imagery",
+    "roi",
+    "validation",
+    "drivers",
+    "boundaries",
+    "subsidence",
+    "invest",
+    "lulc"
+  ],
+  "items": [
+    {
+      "source": "results_current",
+      "destination": "figures_and_tables",
+      "mode": "move"
+    },
+    {
+      "source": "reports/final_report.docx",
+      "destination": "report/final_report.docx",
+      "mode": "copy"
+    },
+    {
+      "source": "runtime/outputs/plus",
+      "destination": "native_outputs/plus",
+      "mode": "move"
+    },
+    {
+      "source": "runtime/outputs/invest",
+      "destination": "native_outputs/invest",
+      "mode": "move"
+    }
+  ],
+  "cleanup": [
+    "results_old",
+    "reports/drafts",
+    "runtime/intermediate",
+    "tmp"
+  ]
+}
