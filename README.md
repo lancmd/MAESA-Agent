@@ -1,5 +1,16 @@
 # MAESA Skill
 
+<p align="center">
+  <img src="assets/maesa-hero.png" alt="MAESA Skill 矿区生态分析主视觉：从采矿地貌、遥感栅格到生态服务成果" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://maesa-skill.solar-beech-1121.chatgpt.site">在线网站</a> ·
+  <a href="#安装方式">立即安装</a> ·
+  <a href="#能力范围">能力范围</a> ·
+  <a href="examples/real_project_template/README.md">项目模板</a>
+</p>
+
 **MAESA（Mining Area Ecological Space Analysis）** 是面向全国矿区土地利用与生态系统服务研究的本地应用技能。它将 ENVI / PyTorch 分类、PLUS 四情景模拟、InVEST 碳储量—水源供给—生境质量评估、沉陷积水复合碳库和 ArcGIS Pro 制图组织为可追溯的工作流。
 
 项目不把商业 GIS 软件暴露到公网。MCP 只作为应用技能与本机工具之间的受控技术接口；软件、原始数据、模型和结果都保留在用户电脑中。
