@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://maesa-skill.solar-beech-1121.chatgpt.site">在线网站</a> ·
+  <a href="https://maesa-skill.microlan.chatgpt.site">在线网站</a> ·
   <a href="#安装方式">立即安装</a> ·
   <a href="#能力范围">能力范围</a> ·
   <a href="examples/real_project_template/README.md">项目模板</a>
