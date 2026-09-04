@@ -221,7 +221,7 @@ def find(job_id: str, root: Path | None = None) -> tuple[Path, dict[str, Any]]:
 def status(job_id: str) -> dict[str, Any]:
     path, record = find(job_id)
     workspace = Path(record["workspace"])
-    state_path = workspace / "agent_state.json"
+    state_path = workspace / "workflow_state.json"
     state = read_json(state_path) if state_path.is_file() else {"stages": {}}
     stages = state.get("stages", {})
     total = len(read_json(Path(record["job_file"])).get("stages", []))

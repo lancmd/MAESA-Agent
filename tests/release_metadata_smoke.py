@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 package = tomllib.loads((ROOT / "mcp_server" / "pyproject.toml").read_text(encoding="utf-8"))
-assert version == package["project"]["version"] == "0.5.0"
+assert version == package["project"]["version"] == "0.6.0"
 assert "MIT License" in (ROOT / "LICENSE").read_text(encoding="utf-8")
 assert version in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
@@ -30,6 +30,10 @@ assert "docs/project.md" in entry_points and "docs/invest-ecosystem.md" in entry
 assert "plus_model/" not in entry_points and "arcgis_steps/" not in entry_points
 assert (ROOT / "scripts" / "project_readiness.py").is_file()
 assert (ROOT / "scripts" / "finalize_project_results.py").is_file()
+assert (ROOT / "scripts" / "workflow_runner.py").is_file()
+assert (ROOT / "scripts" / "setup_skill.ps1").is_file()
+example_directories = {path.name for path in (ROOT / "examples").iterdir() if path.is_dir()}
+assert example_directories <= {"real_project_template", "synthetic_multiperiod"}
 assert (ROOT / "templates" / "final_results_plan.example.json").is_file()
 assert "project.inspect_readiness" in (ROOT / "interfaces" / "backend_registry.example.json").read_text(encoding="utf-8")
 assert "project.finalize_results" in (ROOT / "interfaces" / "backend_registry.example.json").read_text(encoding="utf-8")

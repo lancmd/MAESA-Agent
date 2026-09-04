@@ -23,7 +23,7 @@ from path_safety import resolved
 from project_validator import imagery_period_accuracy, imagery_period_training_roi, validate
 from project_workflow import compile_workflow
 from spatial_preflight import validate as spatial_validate
-from workflow_agent import probe_software
+from workflow_runner import probe_software
 
 
 SOFTWARE_BY_ADAPTER = {

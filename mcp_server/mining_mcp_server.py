@@ -31,7 +31,7 @@ def runtime_root() -> Path:
         root = candidate.resolve()
         if (root / "scripts").is_dir() and (root / "interfaces").is_dir():
             return root
-    raise RuntimeError("MAESA runtime assets are unavailable; reinstall the MAESA-Agent package or set MAESA_SKILL_ROOT")
+    raise RuntimeError("MAESA runtime assets are unavailable; reinstall MAESA Skill or set MAESA_SKILL_ROOT")
 
 
 ROOT = runtime_root()
@@ -159,7 +159,7 @@ class BackendRegistry:
         source = self.path if self.path.exists() else EXAMPLE_REGISTRY
         with source.open("r", encoding="utf-8-sig") as stream:
             payload = json.load(stream)
-        # A normal local registry is created once by setup_agent.ps1 and is
+        # A normal local registry is created once by setup_skill.ps1 and is
         # intentionally ignored by Git.  Add the built-in classification
         # helper on upgrade without altering an explicitly selected custom
         # registry or any of its existing software paths.
@@ -395,7 +395,7 @@ def submit_local_project(project_file: str, output_job: str | None = None, dry_r
 @mcp.tool()
 def resume_job(project_file: str, output_job: str | None = None, continue_on_error: bool = False,
                confirm_overwrite: bool = False, backend: str = "project") -> str:
-    """Resume a locally compiled workflow from its persisted agent state in the background."""
+    """Resume a locally compiled workflow from its persisted workflow state in the background."""
     return submit_local_project(project_file, output_job, False, continue_on_error, confirm_overwrite, backend)
 
 

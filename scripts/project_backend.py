@@ -16,7 +16,7 @@ from project_readiness import inspect_project as inspect_project_readiness  # no
 from project_workflow import compile_workflow  # noqa: E402
 from analysis_validation import validate_results  # noqa: E402
 from lulc_accuracy import evaluate as evaluate_lulc  # noqa: E402
-from workflow_agent import JobRunner  # noqa: E402
+from workflow_runner import JobRunner  # noqa: E402
 from prepare_plus_scenarios import prepare as prepare_plus_scenarios  # noqa: E402
 from finalize_project_results import finalize as finalize_results  # noqa: E402
 from job_manager import cancel as cancel_job, outputs as job_outputs, status as job_status, submit as submit_job  # noqa: E402

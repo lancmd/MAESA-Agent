@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="520" viewBox="0 0 1600 520" role="img" aria-labelledby="title description">
-  <title id="title">MAESA Agent</title>
-  <desc id="description">Local-first mining-area ecological space analysis agent</desc>
+  <title id="title">MAESA Skill</title>
+  <desc id="description">Local mining-area ecological analysis application skill</desc>
   <defs>
     <linearGradient id="background" x1="0" x2="1" y1="0" y2="1">
       <stop offset="0" stop-color="#071b2d"/>
@@ -31,9 +31,9 @@
     <circle cx="184" cy="256" r="14" fill="#f5d982"/>
   </g>
   <g transform="translate(112 112)" fill="#ecfff8">
-    <text x="0" y="0" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600" letter-spacing="6">LOCAL-FIRST GEOSPATIAL AGENT</text>
+    <text x="0" y="0" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600" letter-spacing="6">LOCAL-FIRST GEOSPATIAL SKILL</text>
     <text x="0" y="102" font-family="Segoe UI, Arial, sans-serif" font-size="88" font-weight="750" letter-spacing="2">MAESA</text>
-    <text x="3" y="158" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="400" fill="#bde7d9">Mining Area Ecological Space Analysis Agent</text>
+    <text x="3" y="158" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="400" fill="#bde7d9">Mining Area Ecological Analysis Skill</text>
     <g transform="translate(0 211)" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="600">
       <rect width="170" height="45" rx="22" fill="#eafbd6"/><text x="28" y="30" fill="#174a42">LULC</text>
       <rect x="184" width="170" height="45" rx="22" fill="#eafbd6"/><text x="222" y="30" fill="#174a42">PLUS</text>

@@ -17,7 +17,7 @@ from rasterio.transform import from_origin
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from workflow_agent import probe_software  # noqa: E402
+from workflow_runner import probe_software  # noqa: E402
 
 
 def write_raster(path: Path, values: np.ndarray, *, dtype: str = "float32") -> None:

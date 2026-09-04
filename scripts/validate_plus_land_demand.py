@@ -23,7 +23,7 @@ def main() -> int:
     source.add_argument("--demand-json", type=Path,
                         help="JSON object whose keys are six integer LULC codes")
     source.add_argument("--demand-manifest", type=Path,
-                        help="Scenario demand manifest written by prepare_plus_scenario_demand.py")
+                        help="Scenario land-demand manifest to validate")
     parser.add_argument("--scenario", choices=("ND", "UD", "EP", "RE"),
                         help="Required with --demand-manifest")
     parser.add_argument("--output", type=Path, required=True)

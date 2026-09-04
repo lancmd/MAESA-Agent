@@ -1,7 +1,7 @@
 interface:
-  display_name: "Mining Area Ecological Workflow"
-  short_description: "Run and package local mining-area GIS workflows"
-  default_prompt: "Use $mining-area-ecological-space-analysis to inspect my local project, run or resume the enabled workflow, validate outputs, and package final artifacts safely."
+  display_name: "MAESA Skill"
+  short_description: "Apply reproducible ecological analysis to mining areas"
+  default_prompt: "Use $mining-area-ecological-analysis to inspect my local project, run or resume the enabled workflow, validate outputs, and package final artifacts safely."
 dependencies:
   tools:
     - type: "mcp"

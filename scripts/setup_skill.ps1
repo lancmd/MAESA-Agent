@@ -71,5 +71,5 @@ if (-not (Test-Path -LiteralPath $plusProfile)) {
     Copy-Item -LiteralPath $plusProfileExample -Destination $plusProfile
 }
 
-& $venvPython (Join-Path $PSScriptRoot "verify_agent_install.py") --skill-root $skillRoot
-Write-Output "Setup complete. Run .\scripts\maesa_doctor.ps1 to inspect software and data readiness, then start: .\scripts\start_agent_mcp.ps1"
+& $venvPython (Join-Path $PSScriptRoot "verify_skill_install.py") --skill-root $skillRoot
+Write-Output "Setup complete. Run .\scripts\maesa_doctor.ps1 to inspect software and data readiness, then start: .\scripts\start_skill_mcp.ps1"

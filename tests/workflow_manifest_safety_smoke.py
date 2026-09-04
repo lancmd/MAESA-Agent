@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from workflow_agent import JobRunner  # noqa: E402
+from workflow_runner import JobRunner  # noqa: E402
 
 
 with tempfile.TemporaryDirectory() as temporary:

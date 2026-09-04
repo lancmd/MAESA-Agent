@@ -109,7 +109,7 @@ def compute(root: Path, depth_path: Path, output_dir: Path):
     return rows, densities, csv_path, pixel_area_m2
 
 
-def make_figure(rows, densities, output_dir: Path, pixel_area_m2: float):
+def make_figure(rows, densities, output_dir: Path, pixel_area_m2: float, study_name: str):
     mpl.rcParams.update({
         "font.family": choose_font(), "font.size": 9, "axes.unicode_minus": False,
         "axes.linewidth": 0.8, "xtick.direction": "out", "ytick.direction": "out",
@@ -139,12 +139,12 @@ def make_figure(rows, densities, output_dir: Path, pixel_area_m2: float):
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
         ax.margins(y=0.08)
     axes[1, 0].set_xlabel("年份", fontsize=8); axes[1, 1].set_xlabel("年份", fontsize=8)
-    fig.suptitle("皖北六市采煤沉陷区水体库容、覆盖面积及复合碳储量变化", fontsize=12, y=1.02)
+    fig.suptitle(f"{study_name}采煤沉陷区水体库容、覆盖面积及复合碳储量变化", fontsize=12, y=1.02)
     fig.text(0.01, -0.035,
              "注：库容和覆盖面积使用各期沉陷积水 LULC（编码1）与2025年30 m沉陷深度栅格；水生植被≤1 m、底泥>1 m为水深代理。碳密度为候选实测参数均值。",
              fontsize=6.5, color="#555555")
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(output_dir / f"皖北六市沉陷积水库容与复合碳储量时间序列.{ext}", dpi=300, bbox_inches="tight")
+        fig.savefig(output_dir / f"沉陷积水库容与复合碳储量时间序列.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -153,11 +153,12 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--depth", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--study-name", default="研究区矿区")
     args = parser.parse_args()
     depth = args.depth or (args.root / "subsidence" / "aligned" / "subsidence_depth_2025_positive_down_30m_utm50n.tif")
     out = args.out or (args.root / "结果" / "沉陷水体与碳储量")
     rows, densities, csv_path, pixel_area_m2 = compute(args.root, depth, out)
-    make_figure(rows, densities, out, pixel_area_m2)
+    make_figure(rows, densities, out, pixel_area_m2, args.study_name)
     metadata = {
         "years": YEARS,
         "depth_raster": str(depth),
@@ -176,7 +177,7 @@ def main():
         "csv": str(csv_path),
     }
     (out / "沉陷水体与复合碳储量_计算说明.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"figure": str(out / "皖北六市沉陷积水库容与复合碳储量时间序列.png"), "csv": str(csv_path), "status": metadata["status"]}, ensure_ascii=False))
+    print(json.dumps({"figure": str(out / "沉陷积水库容与复合碳储量时间序列.png"), "csv": str(csv_path), "status": metadata["status"]}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

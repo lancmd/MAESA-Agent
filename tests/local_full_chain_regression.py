@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from project_validator import validate  # noqa: E402
 from project_workflow import compile_workflow  # noqa: E402
-from workflow_agent import JobRunner  # noqa: E402
+from workflow_runner import JobRunner  # noqa: E402
 
 
 if os.getenv("MAESA_RUN_LOCAL_FULL_CHAIN") != "1":

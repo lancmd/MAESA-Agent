@@ -18,7 +18,9 @@ REQUIRED_FILES = (
     "mcp_server/pyproject.toml",
     "interfaces/backend_registry.example.json",
     "config/local_paths.example.json",
-    "scripts/start_agent_mcp.ps1",
+    "scripts/start_skill_mcp.ps1",
+    "scripts/setup_skill.ps1",
+    "scripts/workflow_runner.py",
     "scripts/maesa_doctor.ps1",
     "scripts/project_workflow.py",
     "scripts/finalize_project_results.py",
@@ -71,7 +73,7 @@ def main() -> int:
         raise SystemExit(f"registry includes non-local HTTP backends: {', '.join(remote)}")
     dependencies = [name for name in ("mcp", "numpy", "rasterio") if importlib.util.find_spec(name) is None]
     if dependencies:
-        raise SystemExit(f"runtime dependencies are unavailable: {', '.join(dependencies)}; run scripts/setup_agent.ps1")
+        raise SystemExit(f"runtime dependencies are unavailable: {', '.join(dependencies)}; run scripts/setup_skill.ps1")
     print(json.dumps({"status": "ready", "skill_root": str(root), "backends": sorted(backends)}, ensure_ascii=False))
     return 0
 

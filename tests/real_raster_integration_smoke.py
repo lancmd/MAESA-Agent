@@ -19,7 +19,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from project_workflow import compile_workflow  # noqa: E402
 from analysis_validation import validate_subsidence_water  # noqa: E402
 from scenario_service_table import build  # noqa: E402
-from workflow_agent import JobRunner  # noqa: E402
+from workflow_runner import JobRunner  # noqa: E402
 
 
 def command(*args: object) -> None:

@@ -31,4 +31,4 @@ python .\scripts\finalize_project_results.py `
 
 MCP 宿主可先调用 `finalize_project_results(..., apply=false)` 展示同一预览，在用户确认计划后再以 `apply=true` 执行。
 
-归档不改变科研验证状态。`agent_state.json`、`outputs_manifest.json`、`provenance.json`、`validation_summary.json` 以及 PLUS 各情景的栅格校验记录应随最终成果保留。
+归档不改变科研验证状态。`workflow_state.json`、`outputs_manifest.json`、`provenance.json`、`validation_summary.json` 以及 PLUS 各情景的栅格校验记录应随最终成果保留。

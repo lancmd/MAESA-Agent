@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from job_manager import now, read_json, release_lock, write_json
-from workflow_agent import JobRunner
+from workflow_runner import JobRunner
 
 
 def terminal_status(state: dict, return_code: int) -> str:

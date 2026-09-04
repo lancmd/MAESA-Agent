@@ -188,7 +188,7 @@ def _load_resnet50(manifest: dict[str, Any], weights: Path, device: str):
         import torch.nn as nn
         from torchvision import models
     except ImportError as error:
-        raise RuntimeError("native ResNet-50 inference requires torch and torchvision; run setup_agent.ps1 -WithPyTorch") from error
+        raise RuntimeError("native ResNet-50 inference requires torch and torchvision; run setup_skill.ps1 -WithPyTorch") from error
     try:
         checkpoint = torch.load(str(weights), map_location="cpu", weights_only=True)
     except TypeError as error:

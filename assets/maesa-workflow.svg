@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1180" viewBox="0 0 1440 1180" role="img" aria-labelledby="title desc">
-  <title id="title">MAESA Agent bilingual workflow</title>
+  <title id="title">MAESA Skill bilingual workflow</title>
   <desc id="desc">A concise five-stage local-first workflow for mining-area ecological space analysis.</desc>
   <defs>
     <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b455b"/><stop offset="1" stop-color="#0f7d70"/></linearGradient>
@@ -28,20 +28,20 @@
 
   <g class="sans">
     <text x="720" y="58" text-anchor="middle" class="eyebrow">LOCAL-FIRST · REPRODUCIBLE · HUMAN-CONFIRMED</text>
-    <text x="720" y="106" text-anchor="middle" class="headline">MAESA Agent Workflow ｜ 矿区生态空间分析工作流</text>
+    <text x="720" y="106" text-anchor="middle" class="headline">MAESA Skill Workflow ｜ 矿区生态分析应用流程</text>
     <text x="720" y="138" text-anchor="middle" class="subtitle">从用户本地数据到可验证的土地利用、情景预测、生态服务与成果地图</text>
   </g>
 
   <g class="sans" filter="url(#shadow)">
     <rect x="280" y="174" width="880" height="74" rx="18" fill="url(#hero)"/>
     <circle cx="332" cy="211" r="22" fill="#c7f1e5"/><path d="M321 205h22M321 216h14M345 216h-2" stroke="#126860" stroke-width="4" stroke-linecap="round"/>
-    <text x="377" y="205" font-size="23" font-weight="800" fill="#fff">MAESA Local Agent</text>
+    <text x="377" y="205" font-size="23" font-weight="800" fill="#fff">MAESA Local Skill</text>
     <text x="377" y="229" font-size="16" fill="#d8f6ee">LLM Copilot · local MCP · confirmed local execution</text>
   </g>
 
   <g class="sans">
     <rect x="294" y="274" width="190" height="31" rx="15" fill="#e5f3db"/><text x="389" y="295" text-anchor="middle" class="pill">USER DATA ｜ 用户数据</text>
-    <rect x="524" y="274" width="190" height="31" rx="15" fill="#dcefee"/><text x="619" y="295" text-anchor="middle" class="pill">LOCAL AGENT ｜ 本地智能体</text>
+    <rect x="524" y="274" width="190" height="31" rx="15" fill="#dcefee"/><text x="619" y="295" text-anchor="middle" class="pill">LOCAL SKILL ｜ 本地技能</text>
     <rect x="754" y="274" width="190" height="31" rx="15" fill="#dcefee"/><text x="849" y="295" text-anchor="middle" class="pill">DESKTOP GIS ｜ 本地软件</text>
     <rect x="984" y="274" width="190" height="31" rx="15" fill="#fff0d0"/><text x="1079" y="295" text-anchor="middle" class="pill">OUTPUTS ｜ 研究成果</text>
   </g>

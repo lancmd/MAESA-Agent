@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from path_safety import PathSafetyError, is_unc, require_within
-from workflow_agent import ROOT, probe_software
+from workflow_runner import ROOT, probe_software
 from classification_profiles import profile as resolve_classification_profile, supported_sensors
 
 

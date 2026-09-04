@@ -292,7 +292,7 @@ class JobRunner:
         self.workspace.mkdir(parents=True, exist_ok=True)
         for folder in ("logs", "generated", "intermediate", "outputs", "validation"):
             (self.workspace / folder).mkdir(exist_ok=True)
-        self.state_path = self.workspace / "agent_state.json"
+        self.state_path = self.workspace / "workflow_state.json"
         self.state = load_json(self.state_path) if self.state_path.exists() else {
             "project_id": self.job.get("project_id"), "created_at": now(), "stages": {}
         }

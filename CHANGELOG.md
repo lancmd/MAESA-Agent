@@ -1,6 +1,14 @@
 # Changelog
 
-This record tracks user-visible changes to MAESA-Agent. Dates refer to source releases, not to individual research runs.
+This record tracks user-visible changes to MAESA Skill. Dates refer to source releases, not to individual research runs.
+
+## 0.6.0 - 2026-09-04
+
+- Repositioned the project as MAESA Skill, renamed the public Skill to `mining-area-ecological-analysis`, and renamed setup, startup, verification and workflow-runner entry points accordingly.
+- Removed the real-study demonstration, case report builders and region-specific preparation/rendering code from the distributable repository. The remaining synthetic regression data are generated and contain no real study-area observations.
+- Generalised study-area labels and output names used by population, ArcGIS, subsidence and mine-carbon utilities so projects from any mining region can supply their own boundary and title.
+- Renamed the persistent execution record to `workflow_state.json`; readers retain a legacy fallback for existing local projects.
+- Restored Python 3.11 compatibility by removing the case-specific report module that used Python 3.12-only nested f-string syntax.
 
 ## 0.5.0 - 2026-09-03
 

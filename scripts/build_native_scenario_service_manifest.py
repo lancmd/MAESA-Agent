@@ -26,6 +26,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario-root", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--series-id", default="mining_area_native_invest_scenarios")
     parser.add_argument("--scenarios", nargs="+", default=list(SCENARIOS), choices=SCENARIOS)
     args = parser.parse_args()
     root = args.scenario_root.expanduser().resolve()
@@ -39,7 +40,7 @@ def main() -> int:
                         "water_yield": str(water), "habitat_quality": str(habitat)})
     manifest = {
         "schema_version": 1,
-        "series_id": "wanbei_mining_2026_plus_native_invest_scenarios",
+        "series_id": args.series_id,
         "common_lulc_contract": "mining_water_6class: 1沉陷积水,2自然水体,3建设用地,4耕地,5林地,6草地",
         "normalization": {"method": "global_minmax", "scope": "all_declared_2026_scenarios"},
         "ahp": {"criteria_order": ["water_yield", "carbon", "habitat_quality"],

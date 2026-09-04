@@ -1,13 +1,13 @@
-# 论文成果汇总与单位契约
+# 统计、制图与单位契约
 
-`scripts/build_wanbei_report_assets.py` 从项目工作区的正式栅格、统计 CSV 和情景输出中重新汇总图表数据；`scripts/build_ecosystem_service_report.py` 将这些数据、三线表和已经验收的图片组织为 DOCX。两者均面向本地工作区，不把原始影像、矿区边界、碳密度或研究结论提交到仓库。
+本说明适用于全国任意矿区。项目参数、范围、年份、分类编码和生态参数必须来自当前项目文件，不得从示例、论文或其他矿区复制结果值。仓库只提供通用统计与制图能力，不包含任何真实研究区数据和研究结论。
 
 ## 运行前提
 
 - 完成空间预检，全部统计栅格与 LULC 使用同一投影网格和掩膜；
 - Carbon、Annual Water Yield、Habitat Quality 与综合服务输出均已写入项目工作区；
 - 以独立验证样本、PLUS 回代或现场资料核对的指标，仍应按实际状态写入 `pending_validation`，不能因文档生成成功而改为已验证；
-- 报告脚本依赖 `rasterio`、`matplotlib` 和 `python-docx`。`setup_agent.ps1` 已通过 `reporting` 可选依赖安装它们。
+- 图表脚本依赖 `rasterio` 和 `matplotlib`；需要生成 DOCX 时由具体项目自行提供模板和 `python-docx`。
 
 ## 统一单位
 
@@ -20,11 +20,6 @@
 
 不要对 `tot_c_cur` 的总和再次乘像元面积。30 m 方格的面积是 `0.09 hm²`，但报告脚本从 GeoTIFF 变换参数读取实际像元面积，以避免把假定网格写死。
 
-## 本地执行
+## 发布检查
 
-```powershell
-.\.venv\Scripts\python.exe .\scripts\build_wanbei_report_assets.py --root C:\path\to\project
-.\.venv\Scripts\python.exe .\scripts\build_ecosystem_service_report.py --root C:\path\to\project
-```
-
-DOCX 生成后应转换为 PDF 或 PNG 页面进行视觉检查，重点检查三线表不截字、地图图例不遮挡、连续色带带有单位，以及图题和正文中的统计数字与 CSV 一致。
+统计表必须记录输入栅格、有效像元数、空间分辨率、单位和生成时间。地图和图表发布前应检查图例不遮挡、连续色带带有单位、中文字体不缺字、数字刻度不重叠，并确认图题中的区域和年份来自项目配置。

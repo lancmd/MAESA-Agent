@@ -187,7 +187,8 @@ def add_scale_bar(ax, length_km=20):
     ax.text(x0 + length + 0.01 * (xmax - xmin), y0 + h / 2, "km", ha="left", va="center", fontsize=8)
 
 
-def make_figure(gdb: Path, city_path: Path, workface_path: Path, out_dir: Path, raster_path: Path | None = None):
+def make_figure(gdb: Path, city_path: Path, workface_path: Path, out_dir: Path,
+                raster_path: Path | None = None, study_name: str = "研究区矿区"):
     layer_name, cloud_crs, cloud, cloud_bounds, cloud_schema = load_gdb_layer(gdb, 8)
     workfaces, workface_crs, _ = load_vector(workface_path)
     city, city_crs, _ = load_vector(city_path)
@@ -277,10 +278,11 @@ def make_figure(gdb: Path, city_path: Path, workface_path: Path, out_dir: Path, 
         ax.text(0.02, 0.97, label, transform=ax.transAxes, ha="left", va="top", fontsize=13, color="#d7191c", fontweight="bold")
         ax.set_xticks([]); ax.set_yticks([])
         for side in ax.spines.values(): side.set_color("#777777"); side.set_linewidth(0.6)
-    fig.suptitle("概率积分法预计2026年皖北六市矿区沉陷云图", fontsize=16, y=0.955, fontweight="bold")
-    png = out_dir / "2026年皖北六市矿区沉陷云图_A-F.png"
-    pdf = out_dir / "2026年皖北六市矿区沉陷云图_A-F.pdf"
-    svg = out_dir / "2026年皖北六市矿区沉陷云图_A-F.svg"
+    fig.suptitle(f"概率积分法预计2026年{study_name}沉陷云图", fontsize=16, y=0.955, fontweight="bold")
+    stem = "2026年矿区沉陷云图_A-F"
+    png = out_dir / f"{stem}.png"
+    pdf = out_dir / f"{stem}.pdf"
+    svg = out_dir / f"{stem}.svg"
     fig.savefig(png, dpi=300, facecolor="white")
     fig.savefig(pdf, facecolor="white")
     fig.savefig(svg, facecolor="white")
@@ -315,8 +317,9 @@ def main():
     ap.add_argument("--workface", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--raster", type=Path, default=None, help="从 GDB 导出的 2026 连续沉陷栅格 GeoTIFF")
+    ap.add_argument("--study-name", default="研究区矿区", help="用于图题的研究区名称")
     args = ap.parse_args()
-    png, meta = make_figure(args.gdb, args.city, args.workface, args.out, args.raster)
+    png, meta = make_figure(args.gdb, args.city, args.workface, args.out, args.raster, args.study_name)
     print(json.dumps({"png": str(png), "vmin": meta["display_min_m"], "vmax": meta["display_max_m"], "raw_min": meta["degree_min_m_raw"], "raw_max": meta["degree_max_m_raw"]}, ensure_ascii=False))
 
 

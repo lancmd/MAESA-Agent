@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a runnable local project from the files supplied to an agent.
+"""Create a runnable local project from files supplied to the Skill.
 
 This is intentionally a compiler input builder, not a data downloader.  It
 keeps all paths local and makes the classification method explicit: imagery
@@ -69,7 +69,7 @@ def _period_accuracy(period: dict[str, Any], year: int) -> dict[str, Any] | None
     Keeping the contract on the imagery item lets six-date projects retain the
     provenance of the particular reference samples used for each image.  The
     direct ``validation_samples`` member is deliberately retained as a compact
-    input form for agents that do not need to override the default fields.
+    input form for callers that do not need to override the default fields.
     """
     raw = period.get("accuracy")
     shorthand = period.get("validation_samples")
@@ -117,7 +117,7 @@ def _period_sensor_profile(period: dict[str, Any], classification_sensor: str | 
 
 
 def _invest_model_config(models: dict[str, Any] | None, enabled: bool) -> dict[str, Any]:
-    """Normalise agent-supplied InVEST model settings without inventing a model.
+    """Normalise caller-supplied InVEST model settings without inventing a model.
 
     Carbon remains the useful default for a full-chain project.  Supplying an
     explicit ``invest_models`` object, however, is an instruction to use that

@@ -41,11 +41,11 @@ def main() -> int:
         while not expected.is_file():
             candidate = list(output_dir.glob(f"PLUS_{scenario}_candidateSimulation_*.tif"))
             if candidate:
-                run([args.python, "scripts/workflow_agent.py", "run", "--job", str(args.job), "--stage", f"plus_{scenario}", "--continue-on-error"], log)
+                run([args.python, "scripts/workflow_runner.py", "run", "--job", str(args.job), "--stage", f"plus_{scenario}", "--continue-on-error"], log)
                 continue
-            run([args.python, "scripts/workflow_agent.py", "run", "--job", str(args.job), "--stage", f"plus_{scenario}", "--continue-on-error"], log)
+            run([args.python, "scripts/workflow_runner.py", "run", "--job", str(args.job), "--stage", f"plus_{scenario}", "--continue-on-error"], log)
             time.sleep(max(5, args.poll_seconds))
-        run([args.python, "scripts/workflow_agent.py", "run", "--job", str(args.job), "--stage", f"plus_output_validation_{scenario}", "--continue-on-error"], log)
+        run([args.python, "scripts/workflow_runner.py", "run", "--job", str(args.job), "--stage", f"plus_output_validation_{scenario}", "--continue-on-error"], log)
         run([args.python, "scripts/validate_plus_land_demand.py", "--raster", str(expected), "--demand-manifest", str(args.demand_manifest), "--scenario", scenario, "--output", str(report)], log)
         status_path.write_text(json.dumps({"status": "completed", "last_completed": scenario,
                                            "expected_output": str(expected), "demand_report": str(report)}, ensure_ascii=False, indent=2), encoding="utf-8")

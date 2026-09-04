@@ -15,7 +15,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from workflow_agent import probe_software  # noqa: E402
+from workflow_runner import probe_software  # noqa: E402
 from path_safety import PathSafetyError, is_unc, require_within  # noqa: E402
 from carbon_density_contract import compare_codes  # noqa: E402
 from invest_datastack_builder import build_from_file, build_habitat_quality_datastack  # noqa: E402

@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from workflow_agent import JobRunner, reported_status  # noqa: E402
+from workflow_runner import JobRunner, reported_status  # noqa: E402
 
 
 assert reported_status(json.dumps({"status": "pending_validation", "sections": {"lulc": {"status": "completed"}}}, indent=2)) == "pending_validation"

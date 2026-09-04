@@ -57,7 +57,7 @@ def sensitivity_evidence(workspace: Path) -> dict[str, Any]:
 def invest_evidence(workspace: Path) -> dict[str, Any] | None:
     carbon = first(workspace, ["validation/invest_consistency*.json", "**/*invest*consistency*.json"])
     job = first(workspace, ["generated/workflow_job.json", "generated/workflow_job*.json"])
-    state = first(workspace, ["agent_state.json"])
+    state = first(workspace, ["workflow_state.json", "agent_state.json"])
     if not carbon and not job:
         return None
     evidence: dict[str, Any] = {"carbon": carbon or {}}

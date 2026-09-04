@@ -118,7 +118,7 @@ def _arcgis_read(path: Path, class_field: str, role_field: str | None) -> tuple[
     control service.
     """
     try:
-        from workflow_agent import probe_software
+        from workflow_runner import probe_software
     except ImportError as error:
         raise RuntimeError("cannot locate the local ArcGIS Pro Python bridge") from error
     propy = probe_software()["software"]["arcgis_propy"].get("path")

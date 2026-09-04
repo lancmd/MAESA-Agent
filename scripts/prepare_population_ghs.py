@@ -195,9 +195,9 @@ def main() -> int:
         )
         return 0
 
-    count_name = f"{args.prefix}_wanbei_six_cities_count_100m.tif"
-    density_name = f"{args.prefix}_wanbei_six_cities_density_100m_people_per_km2.tif"
-    report_name = f"{args.prefix}_wanbei_six_cities_population_report.json"
+    count_name = f"{args.prefix}_study_area_count_100m.tif"
+    density_name = f"{args.prefix}_study_area_density_100m_people_per_km2.tif"
+    report_name = f"{args.prefix}_study_area_population_report.json"
     count_output = output_dir / count_name
     density_output = output_dir / density_name
     report_output = output_dir / report_name

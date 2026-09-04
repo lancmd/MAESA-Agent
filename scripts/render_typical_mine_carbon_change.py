@@ -77,7 +77,7 @@ def compute(root: Path, mine_json: Path, output_dir: Path):
     return payload, stats, csv_path
 
 
-def make_figure(payload, stats, output_dir: Path):
+def make_figure(payload, stats, output_dir: Path, study_name: str):
     mpl.rcParams.update({"font.family": choose_font(), "font.size": 9, "axes.unicode_minus": False})
     mines = payload["mines"]
     names = [m["name"] for m in mines]
@@ -93,7 +93,7 @@ def make_figure(payload, stats, output_dir: Path):
                edgecolor="white", linewidth=0.35, label=f"{name}（{city}）")
         bottom += matrix[i]
     ax.plot(YEARS, total, color="red", marker="^", markersize=4.3, linewidth=0.85, label="总碳储量", zorder=5)
-    ax.set_title("皖北六市典型矿区碳储量变化（2005—2025年）", fontsize=12, pad=8)
+    ax.set_title(f"{study_name}典型矿区碳储量变化（2005—2025年）", fontsize=12, pad=8)
     ax.set_xlabel("年份", fontsize=9)
     ax.set_ylabel(r"碳储量（$10^3$ t C）", fontsize=9)
     ax.set_xticks(YEARS)
@@ -104,7 +104,7 @@ def make_figure(payload, stats, output_dir: Path):
               frameon=True, framealpha=0.95, borderpad=0.4, handlelength=1.2)
     fig.tight_layout()
     for ext in ("png", "pdf", "svg"):
-        fig.savefig(output_dir / f"皖北六市典型矿区碳储量变化_2005_2025.{ext}", dpi=300, bbox_inches="tight")
+        fig.savefig(output_dir / f"典型矿区碳储量变化_2005_2025.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -113,11 +113,12 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--mines", type=Path, default=None)
     parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--study-name", default="研究区")
     args = parser.parse_args()
     mines = args.mines or (args.root / "subsidence" / "typical_mines_8_utm50n.json")
     out = args.out or (args.root / "结果" / "分析统计图与表" / "典型矿区碳储量")
     payload, stats, csv_path = compute(args.root, mines, out)
-    make_figure(payload, stats, out)
+    make_figure(payload, stats, out, args.study_name)
     meta = {
         "years": YEARS,
         "mine_boundary_selection": str(mines),
@@ -129,7 +130,7 @@ def main():
         "csv": str(csv_path),
     }
     (out / "典型矿区碳储量_来源与参数.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"figure": str(out / "皖北六市典型矿区碳储量变化_2005_2025.png"), "csv": str(csv_path), "mines": [m["name"] for m in payload["mines"]]}, ensure_ascii=False))
+    print(json.dumps({"figure": str(out / "典型矿区碳储量变化_2005_2025.png"), "csv": str(csv_path), "mines": [m["name"] for m in payload["mines"]]}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

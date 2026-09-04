@@ -22,7 +22,7 @@ from job_manager import outputs, status, submit  # noqa: E402
 from project_validator import validate  # noqa: E402
 from project_workflow import compile_workflow  # noqa: E402
 from scenario_service_table import build  # noqa: E402
-from workflow_agent import JobRunner  # noqa: E402
+from workflow_runner import JobRunner  # noqa: E402
 
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -94,7 +94,7 @@ with tempfile.TemporaryDirectory() as temporary:
             "id": "retry_once", "adapter": "command", "enabled": True, "inputs": [], "outputs": [str(retry_output)], "retries": 1,
             "command": [sys.executable, "-c", "from pathlib import Path; p=Path('retry.marker'); (Path('outputs').mkdir(exist_ok=True), Path('outputs/retry.txt').write_text('ok')) if p.exists() else (p.write_text('1'), (_ for _ in ()).throw(SystemExit(1)))"], "depends_on": []}]}), encoding="utf-8")
     assert JobRunner(retry_job).run() == 0
-    retry_state = json.loads((retry_workspace / "agent_state.json").read_text(encoding="utf-8"))
+    retry_state = json.loads((retry_workspace / "workflow_state.json").read_text(encoding="utf-8"))
     assert retry_state["stages"]["retry_once"]["attempts"] == 2
 
     timeout_workspace = root / "timeout"; timeout_job = root / "timeout_job.json"

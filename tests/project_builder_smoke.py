@@ -1,4 +1,4 @@
-"""Verify the agent-facing input builder emits the dated automation contract."""
+"""Verify the Skill input builder emits the dated automation contract."""
 
 from __future__ import annotations
 
@@ -36,4 +36,4 @@ with tempfile.TemporaryDirectory() as temporary:
                    model_package=str(root / "model"), subsidence_depth_raster=str(root / "dem.tif"))
     depth_project = json.loads(Path(direct["project_file"]).read_text(encoding="utf-8"))
     assert depth_project["inputs"]["subsidence_depth_raster"] == str((root / "dem.tif").resolve())
-print('{"status":"completed","checks":["agent input builder","dated imagery contract"]}')
+print('{"status":"completed","checks":["skill input builder","dated imagery contract"]}')

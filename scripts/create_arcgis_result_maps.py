@@ -230,7 +230,7 @@ def export_layout(aprx: Any, map_object: Any, title: str, year_label: str, bound
     configure_boundary(boundary_layer)
     if context_boundary:
         context_layer = layout_map.addDataFromPath(str(context_boundary))
-        context_layer.name = "皖北六市范围（制图底图）"
+        context_layer.name = "研究区范围（制图底图）"
         configure_context(context_layer)
     frame.map = layout_map
     # Use the complete six-city extent when a context layer is supplied.  This
@@ -328,7 +328,7 @@ def create_one(source_aprx: Path, output_aprx: Path, boundary: Path, raster: Pat
     configure_boundary(boundary_layer)
     if context_boundary:
         context_layer = map_object.addDataFromPath(str(context_boundary))
-        context_layer.name = "皖北六市范围（制图底图）"
+        context_layer.name = "研究区范围（制图底图）"
         configure_context(context_layer)
         try:
             map_object.moveLayer(raster_layer, context_layer, "AFTER")
@@ -348,7 +348,7 @@ def main() -> int:
                         help="ArcGIS Pro PAGX template selected from this computer's installation")
     parser.add_argument("--boundary", required=True, type=Path)
     parser.add_argument("--context-boundary", type=Path,
-                        help="Optional six-city boundary stored in each APRX as a context layer.")
+                        help="Optional study-area boundary stored in each APRX as a context layer.")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--lulc", action="append", default=[], metavar="YEAR=PATH")
     parser.add_argument("--carbon", action="append", default=[], metavar="YEAR=PATH")
@@ -371,7 +371,7 @@ def main() -> int:
     context_aligned = None
     if args.context_boundary:
         context_aligned = aligned_boundary(args.context_boundary.resolve(), Path(source_records[0]).resolve(),
-                                           output / "inputs" / "wanbei_six_cities_analysis_crs.shp")
+                                           output / "inputs" / "study_area_analysis_crs.shp")
     records: list[dict[str, Any]] = []
     for raw in args.lulc:
         year, sep, value = raw.partition("=")

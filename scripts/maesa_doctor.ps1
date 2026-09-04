@@ -25,7 +25,7 @@ function Test-PythonImport([string]$Module) {
     return $LASTEXITCODE -eq 0
 }
 
-Write-Output "MAESA-Agent Doctor"
+Write-Output "MAESA Skill Doctor"
 Write-Output ""
 
 $pythonVersion = ""
@@ -47,7 +47,7 @@ Write-Output ""
 Write-Output "Software:"
 $probe = $null
 try {
-    $probeJson = & $Python (Join-Path $PSScriptRoot "workflow_agent.py") probe 2>$null
+    $probeJson = & $Python (Join-Path $PSScriptRoot "workflow_runner.py") probe 2>$null
     $probe = $probeJson | Out-String | ConvertFrom-Json
 } catch {}
 if ($probe -and $probe.software) {

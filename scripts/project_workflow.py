@@ -1237,9 +1237,9 @@ def main() -> int:
     args = parser.parse_args(); report = compile_workflow(args.project, args.output_job)
     if not args.run:
         print(json.dumps(report, ensure_ascii=False, indent=2)); return 0
-    from workflow_agent import JobRunner
+    from workflow_runner import JobRunner
     runner = JobRunner(Path(report["workflow_job"]), args.dry_run, args.continue_on_error, args.confirm_overwrite)
-    code = runner.run(); report.update({"agent_state": str(runner.state_path), "return_code": code})
+    code = runner.run(); report.update({"workflow_state": str(runner.state_path), "return_code": code})
     print(json.dumps(report, ensure_ascii=False, indent=2)); return code
 
 
