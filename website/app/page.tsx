@@ -1,3 +1,4 @@
+/* oxlint-disable next/no-img-element -- GitHub Pages needs a repository-relative public asset URL. */
 import {
   ArrowRight,
   BarChart3,
@@ -61,7 +62,7 @@ export default function Home() {
             <div className="trust-row"><span><CheckCircle2 size={16} /> 本地数据不上传</span><span><CheckCircle2 size={16} /> 运行过程可追溯</span></div>
           </div>
           <div className="hero-visual" aria-label="矿区生态分析工作流示意">
-            <img src="/maesa-hero.png" alt="矿区生态分析从采矿地貌到生态修复景观的工作流示意" />
+            <img src="maesa-hero.png" alt="矿区生态分析从采矿地貌到生态修复景观的工作流示意" />
             <div className="visual-label top-label"><span /> 多源遥感与驱动因子</div>
             <div className="visual-label bottom-label"><Leaf size={15} /> 生态服务成果</div>
           </div>

@@ -4,7 +4,7 @@
 
 :root { --ink:#06182a; --navy:#092438; --teal:#2ac5ae; --lime:#a2e664; --paper:#f5f7f4; --line:#d8e3df; --muted:#5f7179; }
 * { box-sizing:border-box; }
-html { scroll-behavior:smooth; }
+html { overflow-x:clip; scroll-behavior:smooth; }
 body { margin:0; background:var(--paper); color:var(--ink); font-family:Arial,'Microsoft YaHei',sans-serif; }
 a { color:inherit; text-decoration:none; }
 .hero-shell { overflow:hidden; color:white; background:radial-gradient(circle at 72% 26%,rgba(32,130,147,.22),transparent 30%),#061a2a; }
